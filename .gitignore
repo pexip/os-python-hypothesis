@@ -1,0 +1,14 @@
+*.swo
+*.swp
+*.pyc
+venv*
+.cache
+.hypothesis
+docs/_build
+*.egg-info
+_build
+.tox
+.coverage
+.runtimes
+.idea
+.vagrant
