@@ -1,0 +1,21 @@
+From: Nicolas Dandrimont <olasd@debian.org>
+Date: Tue, 19 Nov 2019 11:51:20 +0100
+Subject: Remove reference to remote image in docs
+
+---
+ hypothesis-python/docs/community.rst | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/hypothesis-python/docs/community.rst b/hypothesis-python/docs/community.rst
+index 57acbfe..23ed35d 100644
+--- a/hypothesis-python/docs/community.rst
++++ b/hypothesis-python/docs/community.rst
+@@ -22,8 +22,6 @@ If you would like to cite Hypothesis, please consider `our suggested citation
+ If you like repo badges, we suggest the following badge, which you can add
+ with reStructuredText or Markdown, respectively:
+ 
+-.. image:: https://img.shields.io/badge/hypothesis-tested-brightgreen.svg
+-
+ .. code:: restructuredtext
+ 
+     .. image:: https://img.shields.io/badge/hypothesis-tested-brightgreen.svg

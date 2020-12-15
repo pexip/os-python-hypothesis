@@ -1,47 +1,48 @@
 Source: python-hypothesis
 Section: python
 Priority: optional
-Maintainer: Debian Python Modules Team <python-modules-team@lists.alioth.debian.org>
+Maintainer: Debian Python Team <team+python@tracker.debian.org>
 Uploaders:
  Tristan Seligmann <mithrandi@debian.org>,
  Vincent Bernat <bernat@debian.org>,
 Build-Depends:
- debhelper (>= 9),
- dh-python,
- python-all,
- python-enum34,
- python-setuptools,
+ debhelper-compat (= 13),
+ dh-sequence-python3,
+ dh-sequence-sphinxdoc <!nodoc>,
  python3-all,
+ python3-attr,
+ python3-coverage,
+ python3-dateutil <!nodoc>,
+ python3-django <!nodoc>,
+ python3-flaky <!nocheck>,
+ python3-hypothesis <!nocheck>,
+ python3-lark <!nodoc>,
+ python3-mock <!nocheck>,
+ python3-numpy <!nocheck>,
+ python3-numpy <!nodoc>,
+ python3-pexpect <!nocheck>,
+ python3-pytest <!nocheck>,
  python3-setuptools,
- python3-sphinx,
- python3-sphinx-rtd-theme,
-Standards-Version: 3.9.8
-Homepage: https://github.com/DRMacIver/hypothesis
-Vcs-Git: https://anonscm.debian.org/git/python-modules/packages/python-hypothesis.git
-Vcs-Browser: https://anonscm.debian.org/cgit/python-modules/packages/python-hypothesis.git
-
-Package: python-hypothesis
-Architecture: all
-Depends: python-enum34, ${misc:Depends}, ${python:Depends}
-Suggests: python-hypothesis-doc
-Description: advanced Quickcheck style testing library for Python 2
- Hypothesis is a library for testing your Python code against a much
- larger range of examples than you would ever want to write by
- hand. It's based on the Haskell library, Quickcheck, and is designed
- to integrate seamlessly into your existing Python unit testing work
- flow.
- .
- Hypothesis is both extremely practical and also advances the state of
- the art of unit testing by some way. It's easy to use, stable, and
- extremely powerful. If you're not using Hypothesis to test your
- project then you're missing out.
- .
- This package contains the Python 2 module.
+ python3-sortedcontainers <!nodoc>,
+ python3-sphinx <!nodoc>,
+ python3-sphinx-rtd-theme <!nodoc>,
+ python3-tz <!nocheck>,
+Rules-Requires-Root: no
+Standards-Version: 4.5.0
+Homepage: https://github.com/HypothesisWorks/hypothesis
+Vcs-Git: https://salsa.debian.org/python-team/packages/python-hypothesis.git
+Vcs-Browser: https://salsa.debian.org/python-team/packages/python-hypothesis
 
 Package: python3-hypothesis
 Architecture: all
-Depends: ${misc:Depends}, ${sphinxdoc:Depends}
-Suggests: python-hypothesis-doc
+Depends:
+ python3-dateutil,
+ ${misc:Depends},
+ ${python3:Depends},
+Recommends:
+ python3-click,
+Suggests:
+ python-hypothesis-doc,
 Description: advanced Quickcheck style testing library for Python 3
  Hypothesis is a library for testing your Python code against a much
  larger range of examples than you would ever want to write by
@@ -58,9 +59,13 @@ Description: advanced Quickcheck style testing library for Python 3
 
 Package: python-hypothesis-doc
 Architecture: all
+Built-Using:
+ ${sphinxdoc:Built-Using},
+Build-Profiles: <!nodoc>
 Section: doc
-Priority: extra
-Depends: ${misc:Depends}, ${python3:Depends}
+Depends:
+ ${misc:Depends},
+ ${sphinxdoc:Depends},
 Description: advanced Quickcheck style testing library (documentation)
  Hypothesis is a library for testing your Python code against a much
  larger range of examples than you would ever want to write by

@@ -1,22 +1,21 @@
 #!/usr/bin/make -f
-# -*- mode: makefile; coding: utf-8 -*-
 
 export LC_ALL=C.UTF-8
 export PYBUILD_NAME=hypothesis
+export PYBUILD_TEST_ARGS=--assert=plain -k 'not dateutil' tests/cover tests/nocover tests/datetime tests/numpy
 
 %:
-	dh $@ --with python2,python3,sphinxdoc --buildsystem=pybuild
+	dh $@ --sourcedirectory=hypothesis-python --buildsystem=pybuild
 
-
-override_dh_python3:
-	dh_python3
-	rm -rf debian/python3-hypothesis/usr/lib/python3.?
-
-override_dh_auto_build:
-	dh_auto_build
+execute_after_dh_auto_build:
+ifeq ($(filter nodoc,$(DEB_BUILD_PROFILES)),)
 	PYTHONPATH=. \
 	    http_proxy='127.0.0.1:9' \
 	    https_proxy='127.0.0.1:9' \
-	    sphinx-build -N -b html docs/ $(CURDIR)/.pybuild/docs/html/
+	    python3 -m sphinx -N -b html hypothesis-python/docs/ $(CURDIR)/.pybuild/docs/html/
+endif
 
 override_dh_auto_test:
+ifeq ($(filter nocheck,$(DEB_BUILD_PROFILES)),)
+	dh_auto_test
+endif

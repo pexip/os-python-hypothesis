@@ -1,83 +1,46 @@
-language: c
-
-sudo: false
-
-env: PYTHONDONTWRITEBYTECODE=x
+language: python
+python: "3.8"
 
 os:
-    - osx
     - linux
+dist: xenial
+
+branches:
+  only:
+    - "master"
 
 cache:
     apt: true
     directories:
-        - $HOME/.runtimes
-        - $HOME/.venv
         - $HOME/.cache/pip
         - $HOME/wheelhouse
+        - $HOME/.local
+        - vendor/bundle
 
 env:
     global:
         - BUILD_RUNTIMES=$HOME/.runtimes
+        - FORMAT_ALL=true
+        - PYTHONDONTWRITEBYTECODE=x
 
-    matrix:
-        - TASK=documentation
-        - TASK=lint
-        - TASK=check-format
-        - TASK=check-coverage
-        - TASK=check-unicode
-        - TASK=check-ancient-pip
-        - TASK=check-pypy
-        - TASK=check-py35
-        - TASK=check-py26
-        - TASK=check-py27
-        - TASK=check-py273
-        - TASK=check-py34
-        - TASK=check-nose
-        - TASK=check-pytest27
-        - TASK=check-pytest26
-        - TASK=check-fakefactory052
-        - TASK=check-fakefactory053
-        - TASK=check-pytest26
-        - TASK=check-django17
-        - TASK=check-django18
+jobs:
+  fast_finish: true
+  include:
+    # Prechecks that we want to run to make sure the deploy is good.
+    - stage: precheck
+      env: TASK=check-whole-repo-tests
+    - env: TASK=lint
+    - env: TASK=check-py38
+    - stage: deploy
+      env: TASK=deploy
 
 script:
-    - make $TASK
+    - ./build.sh
 
-matrix:
-    exclude:
-        - os: osx
-          env: TASK=check-py273
-        - os: osx
-          env: TASK=check-unicode
-        - os: osx
-          env: TASK=check-ancient-pip
-        - os: osx
-          env: TASK=check-fakefactory052
-        - os: osx
-          env: TASK=check-fakefactory053
-        - os: osx
-          env: TASK=check-pytest26
-        - os: osx
-          env: TASK=check-pytest27
-        - os: osx
-          env: TASK=documentation
-        - os: osx
-          env: TASK=check-django17
-        - os: osx
-          env: TASK=check-django18
-        - os: osx
-          env: TASK=check-examples2
-        - os: osx
-          env: TASK=check-examples3
-        - os: osx
-          env: TASK=check-coverage
-        - os: osx
-          env: TASK=check-format
-        - os: osx
-          env: TASK=lint
-    fast_finish: true
+stages:
+    - precheck
+    - name: deploy
+      if: type = push
 
 notifications:
   email:
@@ -85,3 +48,9 @@ notifications:
       - david@drmaciver.com
     on_success: never
     on_failure: change
+
+addons:
+  apt:
+    packages:
+      - libgmp-dev
+      - shellcheck

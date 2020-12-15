@@ -1,0 +1,20 @@
+From: Tristan Seligmann <mithrandi@debian.org>
+Date: Mon, 3 Aug 2020 17:09:14 +0200
+Subject: Skip test that needs pytest 5+
+
+---
+ hypothesis-python/tests/cover/test_unittest.py | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hypothesis-python/tests/cover/test_unittest.py b/hypothesis-python/tests/cover/test_unittest.py
+index 949db49..6b531b4 100644
+--- a/hypothesis-python/tests/cover/test_unittest.py
++++ b/hypothesis-python/tests/cover/test_unittest.py
+@@ -68,6 +68,7 @@ if __name__ == "__main__":
+ """
+ 
+ 
++@pytest.mark.skip(reason="Needs pytest 5+")
+ @pytest.mark.parametrize("err", [[], ["-Werror"]])
+ def test_subTest_no_self(testdir, err):
+     # https://github.com/HypothesisWorks/hypothesis/issues/2462
