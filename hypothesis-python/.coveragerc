@@ -1,0 +1,23 @@
+[run]
+branch = True
+include =
+    **/.tox/*/lib/*/site-packages/hypothesis/*.py
+    **/.tox/*/lib/*/site-packages/hypothesis/**/*.py
+omit =
+    **/pytestplugin.py
+    **/strategytests.py
+    **/compat*.py
+    **/extra/__init__.py
+    **/.tox/*/lib/*/site-packages/hypothesis/internal/coverage.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    raise NotImplementedError
+    def __repr__
+    def __ne__
+    def __copy__
+    def __deepcopy__
+    except ImportError:
+    if TYPE_CHECKING:
+    assert all\(.+\)

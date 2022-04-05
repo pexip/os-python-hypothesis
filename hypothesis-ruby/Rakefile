@@ -1,0 +1,94 @@
+# frozen_string_literal: true
+
+require 'rubygems'
+require 'helix_runtime/build_task'
+require 'date'
+require 'open3'
+
+begin
+  require 'rspec/core/rake_task'
+  RSpec::Core::RakeTask.new(:spec)
+
+  require 'rake/testtask'
+
+  Rake::TestTask.new(minitests: :build) do |t|
+    t.test_files = FileList['minitests/**/test_*.rb']
+    t.verbose = true
+  end
+
+  task test: %i[build spec minitests]
+rescue LoadError
+end
+
+HelixRuntime::BuildTask.new
+
+def rubocop(fix:)
+  sh "bundle exec rubocop #{'-a' if fix} lib spec minitests " \
+  'Rakefile hypothesis-specs.gemspec'
+end
+
+task :checkformat do
+  rubocop(fix: false)
+end
+
+task :format do
+  rubocop(fix: true)
+end
+
+begin
+  require 'yard'
+
+  YARD::Rake::YardocTask.new(:runyard) do |t|
+    t.files = [
+      'lib/hypothesis.rb', 'lib/hypothesis/errors.rb',
+      'lib/hypothesis/possible.rb'
+    ]
+    t.options = ['--markup=markdown', '--no-private']
+  end
+
+  task doc: :runyard do
+    YARD::Registry.load
+
+    objs = YARD::Registry.select do |o|
+      is_private = false
+      t = o
+      until t.root?
+        if t.visibility != :public
+          is_private = true
+          break
+        end
+        t = t.parent
+      end
+
+      !is_private && o.docstring.blank?
+    end
+
+    objs.sort_by! { |o| o.name.to_s }
+
+    unless objs.empty?
+      abort "Undocumented objects: #{objs.map(&:name).join(', ')}"
+    end
+  end
+rescue LoadError
+end
+
+GEMSPEC = 'hypothesis-specs.gemspec'
+
+RELEASE_FILE = 'RELEASE.md'
+CHANGELOG = 'CHANGELOG.md'
+
+def run_for_output(*args)
+  out, result = Open3.capture2(*args)
+  abort if result.exitstatus != 0
+  out.strip
+end
+
+task :clean do
+  sh 'git clean -fdx lib'
+  sh 'rm -rf hypothesis-specs*.gem'
+  sh 'rm -rf ../target'
+end
+
+task gem: :clean do
+  sh 'gem build hypothesis-specs.gemspec'
+end

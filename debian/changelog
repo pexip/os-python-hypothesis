@@ -1,15 +1,218 @@
+python-hypothesis (5.43.3-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Tristan Seligmann <mithrandi@debian.org>  Tue, 15 Dec 2020 10:41:13 +0200
+
+python-hypothesis (5.41.2-1) unstable; urgency=medium
+
+  [ Ondřej Nový ]
+  * d/control: Update Maintainer field with new Debian Python Team
+    contact address.
+  * d/control: Update Vcs-* fields with new Debian Python Team Salsa
+    layout.
+
+  [ Tristan Seligmann ]
+  * New upstream release.
+
+ -- Tristan Seligmann <mithrandi@debian.org>  Tue, 10 Nov 2020 09:11:01 +0200
+
+python-hypothesis (5.32.1-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Tristan Seligmann <mithrandi@debian.org>  Sun, 06 Sep 2020 12:08:05 +0200
+
+python-hypothesis (5.29.0-1) unstable; urgency=medium
+
+  * New upstream release.
+    - Add Recommends: python3-click for the new CLI tool.
+
+ -- Tristan Seligmann <mithrandi@debian.org>  Tue, 25 Aug 2020 17:29:44 +0200
+
+python-hypothesis (5.27.0-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Tristan Seligmann <mithrandi@debian.org>  Thu, 20 Aug 2020 19:16:14 +0200
+
+python-hypothesis (5.24.4-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Tristan Seligmann <mithrandi@debian.org>  Sat, 15 Aug 2020 22:44:19 +0200
+
+python-hypothesis (5.24.0-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Tristan Seligmann <mithrandi@debian.org>  Mon, 10 Aug 2020 20:59:29 +0200
+
+python-hypothesis (5.23.9-2) unstable; urgency=medium
+
+  * Reenable build-time tests.
+  * Disable test requiring pytest 5+.
+
+ -- Tristan Seligmann <mithrandi@debian.org>  Mon, 03 Aug 2020 18:18:56 +0200
+
+python-hypothesis (5.23.9-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Disable hoverxref; not in Debian.
+
+ -- Tristan Seligmann <mithrandi@debian.org>  Mon, 03 Aug 2020 15:22:21 +0200
+
+python-hypothesis (5.20.2-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Declare rootless build.
+  * Bump debhelper-compat to 13.
+  * Switch to dh-sequence-*.
+  * Fix copyright paths.
+
+ -- Tristan Seligmann <mithrandi@debian.org>  Sun, 19 Jul 2020 22:31:48 +0200
+
+python-hypothesis (5.16.0-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Sandro Tosi <morph@debian.org>  Tue, 02 Jun 2020 21:26:34 -0400
+
+python-hypothesis (5.10.4-1) unstable; urgency=medium
+
+  [ Emmanuel Arias ]
+  * Team upload.
+  * Drop pypy support.
+  * New upstream version 5.10.4 (Closes: #949762).
+  * d/gbp.conf: create configuration file and add debian/master branch.
+    - Create debian/master branch according to DEP-14.
+  * d/salsa-ci.yml: enable salsa-ci.
+  * d/control: Bump Standards-Version to 4.5.0 (from 4.1.3).
+  * d/tests/control: Drop tests on tests/py3 folder.
+    - Does not exist on upstream.
+  * Fix link on docs base.
+  * d/tests/control: Add pexpect dependecy on tests.
+  * Add patch to skip lazy test, that fails on Autopkgtest.
+
+  [ Sandro Tosi ]
+  * debian/control
+    - add dateutil, django, lark, numpy, sortedcontainers to b-d, used by
+      sphinx autodoc
+
+ -- Sandro Tosi <morph@debian.org>  Mon, 01 Jun 2020 15:40:22 -0400
+
+python-hypothesis (4.36.2-3) unstable; urgency=medium
+
+  * Drop python2 support; Closes: #937823
+
+ -- Sandro Tosi <morph@debian.org>  Thu, 23 Apr 2020 01:10:54 -0400
+
+python-hypothesis (4.36.2-2) unstable; urgency=medium
+
+  [ Debian Janitor ]
+  * Bump debhelper from old 11 to 12.
+  * Set upstream metadata fields: Bug-Database, Repository, Repository-
+    Browse.
+
+  [ Sandro Tosi ]
+  * Dont run unittests for python2 binary, to reduce pytest rdeps
+
+ -- Sandro Tosi <morph@debian.org>  Mon, 13 Apr 2020 20:37:39 -0400
+
+python-hypothesis (4.36.2-1) unstable; urgency=medium
+
+  * Team upload.
+
+  [ Nicolas Dandrimont ]
+  * New upstream release (Closes: #942693)
+  * Drop remote reference to image in documentation
+
+  [ Ondřej Nový ]
+  * Use debhelper-compat instead of debian/compat.
+
+ -- Nicolas Dandrimont <olasd@debian.org>  Tue, 19 Nov 2019 11:54:08 +0100
+
+python-hypothesis (3.71.11-1) unstable; urgency=medium
+
+  * Team upload.
+
+  [ Ondřej Nový ]
+  * Convert git repository from git-dpm to gbp layout
+  * Use 'python3 -m sphinx' instead of sphinx-build for building docs
+
+  [ Mattia Rizzolo ]
+  * New upstream version 3.71.11.
+    + Compatibility with Python 3.7.  Closes: #904646
+  * Update watch file to the new tarball names.  Closes: #904647
+  * Fix paths after upstream shuffled files around.
+  * d/rules: Drop unneeded override_dh_python3.
+  * d/rules: Add a comment on why the tests are skipped.
+  * Add new dependency on python(3)-dateutil.
+  * Fix autopkgtest to fit the new version.
+
+ -- Mattia Rizzolo <mattia@debian.org>  Mon, 24 Sep 2018 13:47:07 +0200
+
+python-hypothesis (3.44.1-2) unstable; urgency=medium
+
+  * Team upload.
+  * Add python{,3}-/pypy-attrs and python{,3}-/pypy-coverage to B-D
+  * d/control: Set Vcs-* to salsa.debian.org
+  * d/copyright: Use https protocol in Format field
+  * Bump debhelper compat level to 11
+  * Move docs to /usr/share/python-hypothesis
+  * Install examples
+  * Rename lintian override: debian-watch-may-check-gpg-signature
+    -> debian-watch-does-not-check-gpg-signature
+  * Bump Standards-Version to 4.1.3 (no changes).
+
+ -- Ondřej Nový <onovy@debian.org>  Fri, 16 Feb 2018 11:44:09 +0100
+
+python-hypothesis (3.44.1-1) unstable; urgency=medium
+
+  * New upstream release (closes: #884786).
+    - Fix docs reproducibility (closes: #854549).
+  * Replace extra priority with optional.
+  * Bump Standards-Version to 4.1.2 (no changes).
+
+ -- Tristan Seligmann <mithrandi@debian.org>  Tue, 19 Dec 2017 23:04:43 +0200
+
+python-hypothesis (3.12.0-2) unstable; urgency=medium
+
+  * Avoid loading py.test configuration from tox.ini (fixes autopkgtest
+    failures).
+
+ -- Tristan Seligmann <mithrandi@debian.org>  Sat, 08 Jul 2017 13:58:47 +0200
+
+python-hypothesis (3.12.0-1) unstable; urgency=medium
+
+  * New upstream release.
+    - Tweak docs/conf.py to fix building docs when Hypothesis is not
+      installed.
+  * Fix permuted python3-hypothesis and python-hypothesis-doc Depends
+    stanzas (closes: #867435).
+  * Bump Standards-Version to 4.0.0 (no changes).
+
+ -- Tristan Seligmann <mithrandi@debian.org>  Fri, 07 Jul 2017 14:39:39 +0200
+
+python-hypothesis (3.6.1-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Tristan Seligmann <mithrandi@debian.org>  Mon, 26 Dec 2016 14:45:42 +0200
+
+python-hypothesis (3.6.0-1) unstable; urgency=medium
+
+  * The copyright of tests/cover/test_pretty.py is now documented
+    correctly.
+  * New upstream release.
+
+ -- Tristan Seligmann <mithrandi@debian.org>  Mon, 07 Nov 2016 19:48:45 +0200
+
 python-hypothesis (3.4.2-2~bpo8+1pexip1) pexip; urgency=medium
 
   * Prepare Pexip packaging
 
  -- John-Mark Bell <jmb@pexip.com>  Fri, 21 Jul 2017 18:17:11 +0000
-
-python-hypothesis (3.4.2-2~bpo8+1) jessie-backports; urgency=medium
-
-  * Rebuild for jessie-backports.
-  * dont build the pypy package
-
- -- Sandro Tosi <morph@debian.org>  Mon, 24 Oct 2016 16:23:15 -0400
 
 python-hypothesis (3.4.2-2) unstable; urgency=medium
 
