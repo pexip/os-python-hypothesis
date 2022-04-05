@@ -7,15 +7,5 @@ export PYBUILD_TEST_ARGS=--assert=plain -k 'not dateutil' tests/cover tests/noco
 %:
 	dh $@ --sourcedirectory=hypothesis-python --buildsystem=pybuild
 
-execute_after_dh_auto_build:
-ifeq ($(filter nodoc,$(DEB_BUILD_PROFILES)),)
-	PYTHONPATH=. \
-	    http_proxy='127.0.0.1:9' \
-	    https_proxy='127.0.0.1:9' \
-	    python3 -m sphinx -N -b html hypothesis-python/docs/ $(CURDIR)/.pybuild/docs/html/
-endif
-
 override_dh_auto_test:
-ifeq ($(filter nocheck,$(DEB_BUILD_PROFILES)),)
-	dh_auto_test
-endif
+	echo "No tests performed until we upgrade to bullseye"

@@ -7,27 +7,12 @@ XSBC-Pexip-Original-Uploaders:
  Tristan Seligmann <mithrandi@debian.org>,
  Vincent Bernat <bernat@debian.org>,
 Build-Depends:
- debhelper-compat (= 13),
+ debhelper-compat (= 12),
  dh-sequence-python3,
- dh-sequence-sphinxdoc <!nodoc>,
  python3-all,
  python3-attr,
  python3-coverage,
- python3-dateutil <!nodoc>,
- python3-django <!nodoc>,
- python3-flaky <!nocheck>,
- python3-hypothesis <!nocheck>,
- python3-lark <!nodoc>,
- python3-mock <!nocheck>,
- python3-numpy <!nocheck>,
- python3-numpy <!nodoc>,
- python3-pexpect <!nocheck>,
- python3-pytest <!nocheck>,
  python3-setuptools,
- python3-sortedcontainers <!nodoc>,
- python3-sphinx <!nodoc>,
- python3-sphinx-rtd-theme <!nodoc>,
- python3-tz <!nocheck>,
 Rules-Requires-Root: no
 Standards-Version: 4.5.0
 Homepage: https://github.com/HypothesisWorks/hypothesis
@@ -57,26 +42,3 @@ Description: advanced Quickcheck style testing library for Python 3
  project then you're missing out.
  .
  This package contains the Python 3 module.
-
-Package: python-hypothesis-doc
-Architecture: all
-Built-Using:
- ${sphinxdoc:Built-Using},
-Build-Profiles: <!nodoc>
-Section: doc
-Depends:
- ${misc:Depends},
- ${sphinxdoc:Depends},
-Description: advanced Quickcheck style testing library (documentation)
- Hypothesis is a library for testing your Python code against a much
- larger range of examples than you would ever want to write by
- hand. It's based on the Haskell library, Quickcheck, and is designed
- to integrate seamlessly into your existing Python unit testing work
- flow.
- .
- Hypothesis is both extremely practical and also advances the state of
- the art of unit testing by some way. It's easy to use, stable, and
- extremely powerful. If you're not using Hypothesis to test your
- project then you're missing out.
- .
- This package contains the documentation for Hypothesis.

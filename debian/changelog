@@ -1,3 +1,10 @@
+python-hypothesis (5.43.3-1pexip1) pexip; urgency=medium
+
+  * Update to new upstream version and rebuild for buster.
+  * Remove all nodoc/nocheck deps and code.
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Tue, 05 Apr 2022 22:15:47 +0000
+
 python-hypothesis (5.43.3-1) unstable; urgency=medium
 
   * New upstream release.
