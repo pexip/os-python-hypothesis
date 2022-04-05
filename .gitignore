@@ -1,14 +1,39 @@
+# misc (editors, file systems, etc)
+
 *.swo
 *.swp
+.idea
+.vagrant
+.DS_Store
+.hypothesis
+.vscode/
+
+# generic build components
+
+.runtimes
+
+# python
+
 *.pyc
+*.pyo
 venv*
 .cache
-.hypothesis
+.pytest_cache
+.mypy_cache
 docs/_build
 *.egg-info
 _build
 .tox
 .coverage
-.runtimes
-.idea
-.vagrant
+.pypirc
+htmlcov
+build
+dist
+.doctrees/
+
+# encrypted files
+secrets.tar
+secrets
+
+# Rust build targets
+target
