@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 # -*- coding: utf-8 -*-
 """Statistical tests over the forms of the distributions in the standard set of
@@ -28,10 +23,12 @@ import math
 import re
 
 from hypothesis import HealthCheck, settings as Settings
+from hypothesis.control import BuildContext
 from hypothesis.errors import UnsatisfiedAssumption
-from hypothesis.internal import reflection as reflection
+from hypothesis.internal import reflection
 from hypothesis.internal.conjecture.engine import ConjectureRunner
 from hypothesis.strategies import (
+    binary,
     booleans,
     floats,
     integers,
@@ -43,6 +40,7 @@ from hypothesis.strategies import (
     text,
     tuples,
 )
+
 from tests.common.utils import no_shrink
 
 RUNS = 100
@@ -76,17 +74,19 @@ def define_test(specifier, predicate, condition=None, p=0.5, suppress_health_che
             )
 
         def test_function(data):
-            try:
-                value = data.draw(specifier)
-            except UnsatisfiedAssumption:
-                data.mark_invalid()
-            if not _condition(value):
-                data.mark_invalid()
-            if predicate(value):
-                data.mark_interesting()
+            with BuildContext(data):
+                try:
+                    value = data.draw(specifier)
+                except UnsatisfiedAssumption:
+                    data.mark_invalid()
+                if not _condition(value):
+                    data.mark_invalid()
+                if predicate(value):
+                    data.mark_interesting()
 
         successes = 0
-        for _ in range(RUNS):
+        actual_runs = 0
+        for actual_runs in range(1, RUNS + 1):
             # We choose the max_examples a bit larger than default so that we
             # run at least 100 examples outside of the small example generation
             # part of the generation phase.
@@ -103,19 +103,23 @@ def define_test(specifier, predicate, condition=None, p=0.5, suppress_health_che
                 successes += 1
                 if successes >= required_runs:
                     return
+
+            # If we reach a point where it's impossible to hit our target even
+            # if every remaining attempt were to succeed, give up early and
+            # report failure.
+            if (required_runs - successes) > (RUNS - actual_runs):
+                break
+
         event = reflection.get_pretty_function_description(predicate)
         if condition is not None:
             event += "|"
             event += condition_string
 
-        description = ("P(%s) ~ %d / %d = %.2f < %.2f") % (
-            event,
-            successes,
-            RUNS,
-            successes / RUNS,
-            (required_runs / RUNS),
+        raise HypothesisFalsified(
+            f"P({event}) ~ {successes} / {actual_runs} = "
+            f"{successes / actual_runs:.2f} < {required_runs / RUNS:.2f}; "
+            "rejected"
         )
-        raise HypothesisFalsified(description + " rejected")
 
     return run_test
 
@@ -149,6 +153,8 @@ test_can_produce_long_strings_with_no_ascii = define_test(
 test_can_produce_short_strings_with_some_non_ascii = define_test(
     text(), lambda x: any(ord(c) > 127 for c in x), condition=lambda x: len(x) <= 3
 )
+
+test_can_produce_large_binary_strings = define_test(binary(), lambda x: len(x) > 20)
 
 test_can_produce_positive_infinity = define_test(floats(), lambda x: x == math.inf)
 
@@ -205,7 +211,7 @@ test_mostly_largish_floats = define_test(
 )
 
 test_ints_can_occasionally_be_really_large = define_test(
-    integers(), lambda t: t >= 2 ** 63
+    integers(), lambda t: t >= 2**63
 )
 
 test_mixing_is_sometimes_distorted = define_test(
@@ -256,10 +262,9 @@ one_of_nested_strategy = one_of(
 
 for i in range(8):
     exec(
-        """test_one_of_flattens_branches_%d = define_test(
-        one_of_nested_strategy, lambda x: x == %d
+        f"""test_one_of_flattens_branches_{i} = define_test(
+        one_of_nested_strategy, lambda x: x == {i}
     )"""
-        % (i, i)
     )
 
 
@@ -269,10 +274,9 @@ xor_nested_strategy = just(0) | (
 
 for i in range(8):
     exec(
-        """test_xor_flattens_branches_%d = define_test(
-        xor_nested_strategy, lambda x: x == %d
+        f"""test_xor_flattens_branches_{i} = define_test(
+        xor_nested_strategy, lambda x: x == {i}
     )"""
-        % (i, i)
     )
 
 
@@ -295,10 +299,9 @@ one_of_nested_strategy_with_map = one_of(
 
 for i in (1, 4, 6, 16, 20, 24, 28, 32):
     exec(
-        """test_one_of_flattens_map_branches_%d = define_test(
-        one_of_nested_strategy_with_map, lambda x: x == %d
+        f"""test_one_of_flattens_map_branches_{i} = define_test(
+        one_of_nested_strategy_with_map, lambda x: x == {i}
     )"""
-        % (i, i)
     )
 
 
@@ -318,10 +321,9 @@ one_of_nested_strategy_with_flatmap = just(None).flatmap(
 
 for i in range(8):
     exec(
-        """test_one_of_flattens_flatmap_branches_%d = define_test(
-        one_of_nested_strategy_with_flatmap, lambda x: len(x) == %d
+        f"""test_one_of_flattens_flatmap_branches_{i} = define_test(
+        one_of_nested_strategy_with_flatmap, lambda x: len(x) == {i}
     )"""
-        % (i, i)
     )
 
 
@@ -339,10 +341,9 @@ xor_nested_strategy_with_flatmap = just(None).flatmap(
 
 for i in range(8):
     exec(
-        """test_xor_flattens_flatmap_branches_%d = define_test(
-        xor_nested_strategy_with_flatmap, lambda x: len(x) == %d
+        f"""test_xor_flattens_flatmap_branches_{i} = define_test(
+        xor_nested_strategy_with_flatmap, lambda x: len(x) == {i}
     )"""
-        % (i, i)
     )
 
 
@@ -356,10 +357,9 @@ one_of_nested_strategy_with_filter = one_of(
 
 for i in range(4):
     exec(
-        """test_one_of_flattens_filter_branches_%d = define_test(
-        one_of_nested_strategy_with_filter, lambda x: x == 2 * %d
+        f"""test_one_of_flattens_filter_branches_{i} = define_test(
+        one_of_nested_strategy_with_filter, lambda x: x == 2 * {i}
     )"""
-        % (i, i)
     )
 
 

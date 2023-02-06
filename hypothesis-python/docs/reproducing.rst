@@ -39,7 +39,7 @@ was printed you can decorate ``test`` with ``@example(n=1)``.
 as a regression test or to cover some edge case - basically combining a
 Hypothesis test and a traditional parametrized test.
 
-.. autofunction:: hypothesis.example
+.. autoclass:: hypothesis.example
 
 Hypothesis will run all examples you've asked for first. If any of them fail it
 will not go on to look for more examples.
@@ -57,7 +57,7 @@ styles will work as expected:
   @example("Hello world")
   @example(x="Some very long string")
   def test_some_code(x):
-      assert True
+      pass
 
 
   from unittest import TestCase
@@ -68,13 +68,17 @@ styles will work as expected:
       @example("Hello world")
       @example(x="Some very long string")
       def test_some_code(self, x):
-          assert True
+          pass
 
 As with ``@given``, it is not permitted for a single example to be a mix of
 positional and keyword arguments.
 Either are fine, and you can use one in one example and the other in another
 example if for some reason you really want to, but a single example must be
 consistent.
+
+.. automethod:: hypothesis.example.xfail
+
+.. automethod:: hypothesis.example.via
 
 .. _reproducing-with-seed:
 
@@ -138,8 +142,9 @@ as follows:
     ...     test()
     ... except AssertionError:
     ...     pass
+    ...
     Falsifying example: test(f=nan)
-    <BLANKLINE>
+
     You can reproduce this example by temporarily adding @reproduce_failure(..., b'AAAA//AAAAAAAAEA') as a decorator on your test case
 
 Adding the suggested decorator to the test should reproduce the failure (as

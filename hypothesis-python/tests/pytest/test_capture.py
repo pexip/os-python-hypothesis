@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import sys
 
@@ -53,7 +48,7 @@ def test_emits_unicode():
     @settings(verbosity=Verbosity.verbose)
     @given(text())
     def test_should_emit_unicode(t):
-        assert all(ord(c) <= 1000 for c in t)
+        assert all(ord(c) <= 1000 for c in t), ascii(t)
     with pytest.raises(AssertionError):
         test_should_emit_unicode()
 """
@@ -61,7 +56,8 @@ def test_emits_unicode():
 
 @pytest.mark.xfail(
     WINDOWS,
-    reason=("Encoding issues in running the subprocess, possibly pytest's fault"),
+    reason="Encoding issues in running the subprocess, possibly pytest's fault",
+    strict=False,  # It's possible, if rare, for this to pass on Windows too.
 )
 def test_output_emitting_unicode(testdir, monkeypatch):
     monkeypatch.setenv("LC_ALL", "C")
@@ -84,10 +80,8 @@ def get_line_num(token, result, skip_n=0):
                 return i
             else:
                 skipped += 1
-    assert False, "Token %r not found (skipped %r of planned %r skips)" % (
-        token,
-        skipped,
-        skip_n,
+    raise AssertionError(
+        f"Token {token!r} not found (skipped {skipped} of planned {skip_n} skips)"
     )
 
 
@@ -113,10 +107,10 @@ def test_healthcheck_traceback_is_hidden(testdir):
 
 
 COMPOSITE_IS_NOT_A_TEST = """
-from hypothesis.strategies import composite
+from hypothesis.strategies import composite, none
 @composite
 def test_data_factory(draw):
-    pass
+    return draw(none())
 """
 
 

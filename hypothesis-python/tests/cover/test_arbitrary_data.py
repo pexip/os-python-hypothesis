@@ -1,23 +1,18 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import pytest
+from pytest import raises
 
-from hypothesis import find, given, reporting, strategies as st
+from hypothesis import find, given, strategies as st
 from hypothesis.errors import InvalidArgument
-from tests.common.utils import capture_out, raises
 
 
 @given(st.integers(), st.data())
@@ -35,13 +30,10 @@ def test_prints_on_failure():
         if y in x:
             raise ValueError()
 
-    with raises(ValueError):
-        with capture_out() as out:
-            with reporting.with_reporter(reporting.default):
-                test()
-    result = out.getvalue()
-    assert "Draw 1: [0, 0]" in result
-    assert "Draw 2: 0" in result
+    with raises(ValueError) as err:
+        test()
+    assert "Draw 1: [0, 0]" in err.value.__notes__
+    assert "Draw 2: 0" in err.value.__notes__
 
 
 def test_prints_labels_if_given_on_failure():
@@ -53,13 +45,10 @@ def test_prints_labels_if_given_on_failure():
         x.remove(y)
         assert y not in x
 
-    with raises(AssertionError):
-        with capture_out() as out:
-            with reporting.with_reporter(reporting.default):
-                test()
-    result = out.getvalue()
-    assert "Draw 1 (Some numbers): [0, 0]" in result
-    assert "Draw 2 (A number): 0" in result
+    with raises(AssertionError) as err:
+        test()
+    assert "Draw 1 (Some numbers): [0, 0]" in err.value.__notes__
+    assert "Draw 2 (A number): 0" in err.value.__notes__
 
 
 def test_given_twice_is_same():
@@ -69,13 +58,10 @@ def test_given_twice_is_same():
         data2.draw(st.integers())
         raise ValueError()
 
-    with raises(ValueError):
-        with capture_out() as out:
-            with reporting.with_reporter(reporting.default):
-                test()
-    result = out.getvalue()
-    assert "Draw 1: 0" in result
-    assert "Draw 2: 0" in result
+    with raises(ValueError) as err:
+        test()
+    assert "Draw 1: 0" in err.value.__notes__
+    assert "Draw 2: 0" in err.value.__notes__
 
 
 def test_errors_when_used_in_find():

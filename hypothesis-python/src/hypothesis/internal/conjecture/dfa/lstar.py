@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from bisect import bisect_right, insort
 from collections import Counter
@@ -147,7 +142,7 @@ class LStar:
 
         # When we're trying to figure out what state a string leads to we will
         # end up searching to find a suitable candidate. By putting states in
-        # a self-organisating list we ideally minimise the number of lookups.
+        # a self-organising list we ideally minimise the number of lookups.
         self.__self_organising_states = SelfOrganisingList(self.__states)
 
         self.start = 0
@@ -280,7 +275,7 @@ class LStar:
         # First we make sure that normalization is not the source of the
         # failure to match.
         while True:
-            normalized = bytes([self.normalizer.normalize(c) for c in string])
+            normalized = bytes(self.normalizer.normalize(c) for c in string)
             # We can correctly replace the string with its normalized version
             # so normalization is not the problem here.
             if self.member(normalized) == correct_outcome:
@@ -293,7 +288,7 @@ class LStar:
                 def replace(b):
                     if a == b:
                         return target
-                    return bytes([b if c == a else c for c in target])
+                    return bytes(b if c == a else c for c in target)
 
                 self.normalizer.distinguish(a, lambda x: self.member(replace(x)))
                 target = replace(self.normalizer.normalize(a))
@@ -389,7 +384,7 @@ class LearnedDFA(DFA):
     distinguished by a membership test and a set of experiments."""
 
     def __init__(self, lstar):
-        DFA.__init__(self)
+        super().__init__()
         self.__lstar = lstar
         self.__generation = lstar.generation
 
@@ -447,7 +442,7 @@ class IntegerNormalizer:
         self.__cache = {}
 
     def __repr__(self):
-        return "IntegerNormalizer(%r)" % (list(self.__values),)
+        return f"IntegerNormalizer({list(self.__values)!r})"
 
     def __copy__(self):
         result = IntegerNormalizer()

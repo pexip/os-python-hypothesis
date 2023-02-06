@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import datetime as dt
 
@@ -23,6 +18,7 @@ from hypothesis.errors import FailedHealthCheck, InvalidArgument
 from hypothesis.extra.dateutil import timezones
 from hypothesis.strategies import data, datetimes, just, sampled_from, times
 from hypothesis.strategies._internal.datetime import datetime_does_not_exist
+
 from tests.common.debug import assert_all_examples, find_any, minimal
 from tests.common.utils import fails_with
 
@@ -126,4 +122,4 @@ def test_datetimes_can_exclude_imaginary():
 def test_non_imaginary_datetimes_at_boundary(val):
     # This is expected to fail because Australia/Sydney is UTC+10,
     # and the filter logic overflows when checking for round-trips.
-    assert False
+    raise AssertionError

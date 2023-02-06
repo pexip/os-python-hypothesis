@@ -13,7 +13,9 @@ if you're still getting security patches, you can test with Hypothesis.
 
 Using it is quite straightforward: All you need to do is subclass
 :class:`hypothesis.extra.django.TestCase` or
-:class:`hypothesis.extra.django.TransactionTestCase`
+:class:`hypothesis.extra.django.TransactionTestCase` or
+:class:`~hypothesis.extra.django.LiveServerTestCase` or
+:class:`~hypothesis.extra.django.StaticLiveServerTestCase`
 and you can use :func:`@given <hypothesis.given>` as normal,
 and the transactions will be per example
 rather than per test function as they would be if you used :func:`@given <hypothesis.given>` with a normal
@@ -23,6 +25,8 @@ on these classes that do not use
 :func:`@given <hypothesis.given>` will be run as normal.
 
 .. class:: hypothesis.extra.django.TransactionTestCase
+.. class:: hypothesis.extra.django.LiveServerTestCase
+.. class:: hypothesis.extra.django.StaticLiveServerTestCase
 
 We recommend avoiding :class:`~hypothesis.extra.django.TransactionTestCase`
 unless you really have to run each test case in a database transaction.
@@ -37,8 +41,8 @@ a strategy for Django models:
 
 .. autofunction:: hypothesis.extra.django.from_model
 
-For example, using `the trivial django project we have for testing
-<https://github.com/HypothesisWorks/hypothesis/blob/master/hypothesis-python/tests/django/toystore/models.py>`_:
+For example, using :gh-file:`the trivial django project we have for testing
+<hypothesis-python/tests/django/toystore/models.py>`:
 
 .. code-block:: pycon
 
@@ -66,11 +70,6 @@ If you *do* have validators attached, Hypothesis will only generate examples
 that pass validation.  Sometimes that will mean that we fail a
 :class:`~hypothesis.HealthCheck` because of the filtering, so let's explicitly
 pass a strategy to skip validation at the strategy level:
-
-.. note::
-    Inference from validators will be much more powerful when :issue:`1116`
-    is implemented, but there will always be some edge cases that require you
-    to pass an explicit strategy.
 
 .. code-block:: pycon
 
@@ -123,7 +122,7 @@ the *flatmap* function as follows:
 
 .. code:: python
 
-  from hypothesis.strategies import lists, just
+  from hypothesis.strategies import just, lists
 
 
   def generate_with_shops(company):

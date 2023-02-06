@@ -1,24 +1,19 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import typing
 
 import attr
 import pytest
 
-from hypothesis import given, infer, strategies as st
+from hypothesis import given, strategies as st
 from hypothesis.errors import ResolutionFailed
 
 
@@ -75,7 +70,7 @@ class UnhelpfulConverter:
     a = attr.ib(converter=lambda x: x)
 
 
-@given(st.builds(Inferrables, has_default=infer, has_default_factory=infer))
+@given(st.builds(Inferrables, has_default=..., has_default_factory=...))
 def test_attrs_inference_builds(c):
     pass
 
@@ -93,4 +88,4 @@ def test_cannot_infer(c):
 
 def test_cannot_infer_takes_self():
     with pytest.raises(ResolutionFailed):
-        st.builds(Inferrables, has_default_factory_takes_self=infer).example()
+        st.builds(Inferrables, has_default_factory_takes_self=...).example()

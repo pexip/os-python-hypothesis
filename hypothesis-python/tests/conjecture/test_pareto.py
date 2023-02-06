@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import pytest
 
@@ -41,7 +36,7 @@ def test_pareto_front_contains_different_interesting_reasons():
 
         runner.run()
 
-        assert len(runner.pareto_front) == 2 ** 4
+        assert len(runner.pareto_front) == 2**4
 
 
 def test_database_contains_only_pareto_front():
@@ -236,7 +231,7 @@ def test_does_not_optimise_the_pareto_front_if_interesting():
 
 
 def test_stops_optimising_once_interesting():
-    hi = 2 ** 16 - 1
+    hi = 2**16 - 1
 
     def test(data):
         n = data.draw_bits(16)

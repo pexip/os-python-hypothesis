@@ -1,0 +1,22 @@
+From: =?utf-8?q?Timo_R=C3=B6hling?= <roehling@debian.org>
+Date: Wed, 1 Feb 2023 21:16:50 +0100
+Subject: Fix failing numpy test
+
+Closes: #1030233
+---
+ hypothesis-python/tests/numpy/test_gen_data.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hypothesis-python/tests/numpy/test_gen_data.py b/hypothesis-python/tests/numpy/test_gen_data.py
+index d15a3ed..5bfe727 100644
+--- a/hypothesis-python/tests/numpy/test_gen_data.py
++++ b/hypothesis-python/tests/numpy/test_gen_data.py
+@@ -345,7 +345,7 @@ np_version = tuple(int(x) for x in np.__version__.split(".")[:2])
+ 
+ @pytest.mark.parametrize("fill", [False, True])
+ # Overflowing elements deprecated upstream in Numpy 1.24 :-)
+-@fails_with(InvalidArgument if np_version < (1, 24) else DeprecationWarning)
++@fails_with((InvalidArgument, DeprecationWarning))
+ @given(st.data())
+ def test_overflowing_integers_are_deprecated(fill, data):
+     kw = {"elements": st.just(300)}

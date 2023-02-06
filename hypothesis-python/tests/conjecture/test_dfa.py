@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import itertools
 import math
@@ -89,6 +84,13 @@ def dfas(draw):
 
 @settings(max_examples=20)
 @given(dfas(), st.booleans())
+@example(
+    ConcreteDFA(
+        transitions=[[(0, 2), (1, 255, 1)], [(0, 2), (1, 255, 0)], []],
+        accepting={2},
+    ),
+    False,
+)
 def test_canonicalised_matches_same_strings(dfa, via_repr):
     canon = dfa.canonicalise()
     note(canon)

@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import math
 import sys
@@ -35,21 +30,21 @@ def test_cathetus_simple_underflow():
     a = sys.float_info.min
     h = a * math.sqrt(2)
     b = cathetus(h, a)
-    assert b > 0, "expecting positive cathetus(%g, %g), got %g" % (h, a, b)
+    assert b > 0, f"expecting positive cathetus({h:g}, {a:g}), got {b:g}"
 
 
 def test_cathetus_huge_no_overflow():
     h = sys.float_info.max
     a = h / math.sqrt(2)
     b = cathetus(h, a)
-    assert math.isfinite(b), "expecting finite cathetus(%g, %g), got %g" % (h, a, b)
+    assert math.isfinite(b), f"expecting finite cathetus({h:g}, {a:g}), got {b:g}"
 
 
 def test_cathetus_large_no_overflow():
     h = sys.float_info.max / 3
     a = h / math.sqrt(2)
     b = cathetus(h, a)
-    assert math.isfinite(b), "expecting finite cathetus(%g, %g), got %g" % (h, a, b)
+    assert math.isfinite(b), f"expecting finite cathetus({h:g}, {a:g}), got {b:g}"
 
 
 @pytest.mark.parametrize(

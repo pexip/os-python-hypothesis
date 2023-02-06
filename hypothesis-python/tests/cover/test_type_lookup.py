@@ -1,56 +1,64 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
+import abc
 import enum
-import sys
-from typing import Callable, Generic, List, Sequence, TypeVar, Union
+from inspect import Parameter as P, Signature
+from typing import Callable, Dict, Generic, List, Sequence, TypeVar, Union
 
 import pytest
 
-from hypothesis import given, infer, strategies as st
+from hypothesis import given, infer, settings, strategies as st
 from hypothesis.errors import (
     HypothesisDeprecationWarning,
     InvalidArgument,
     ResolutionFailed,
 )
+from hypothesis.internal.compat import get_type_hints
+from hypothesis.internal.reflection import get_pretty_function_description
 from hypothesis.strategies._internal import types
-from hypothesis.strategies._internal.core import _strategies
+from hypothesis.strategies._internal.core import _from_type
 from hypothesis.strategies._internal.types import _global_type_lookup
+from hypothesis.strategies._internal.utils import _strategies
+
 from tests.common.debug import assert_all_examples, find_any
-from tests.common.utils import checks_deprecated_behaviour, fails_with, temp_registered
+from tests.common.utils import fails_with, temp_registered
 
 # Build a set of all types output by core strategies
-blacklist = [
+blocklist = {
     "builds",
+    "data",
+    "deferred",
     "from_regex",
     "from_type",
     "ip_addresses",
     "iterables",
+    "just",
+    "nothing",
+    "one_of",
     "permutations",
     "random_module",
     "randoms",
+    "recursive",
     "runner",
     "sampled_from",
+    "shared",
     "timezone_keys",
     "timezones",
-]
+}
+assert set(_strategies).issuperset(blocklist), blocklist.difference(_strategies)
 types_with_core_strat = set()
 for thing in (
     getattr(st, name)
     for name in sorted(_strategies)
-    if name in dir(st) and name not in blacklist
+    if name in dir(st) and name not in blocklist
 ):
     for n in range(3):
         try:
@@ -166,13 +174,14 @@ def test_pulic_interface_works():
         fails.example()
 
 
-def test_given_can_infer_from_manual_annotations():
+@pytest.mark.parametrize("infer_token", [infer, ...])
+def test_given_can_infer_from_manual_annotations(infer_token):
     # Editing annotations before decorating is hilariously awkward, but works!
     def inner(a):
-        pass
+        assert isinstance(a, int)
 
     inner.__annotations__ = {"a": int}
-    given(a=infer)(inner)()
+    given(a=infer_token)(inner)()
 
 
 class EmptyEnum(enum.Enum):
@@ -199,8 +208,13 @@ def test_uninspectable_from_type():
         st.from_type(BrokenClass).example()
 
 
+def _check_instances(t):
+    # See https://github.com/samuelcolvin/pydantic/discussions/2508
+    return t.__module__ != "typing" and not t.__module__.startswith("pydantic")
+
+
 @pytest.mark.parametrize(
-    "typ", sorted((x for x in _global_type_lookup if x.__module__ != "typing"), key=str)
+    "typ", sorted((x for x in _global_type_lookup if _check_instances(x)), key=str)
 )
 @given(data=st.data())
 def test_can_generate_from_all_registered_types(data, typ):
@@ -216,6 +230,18 @@ class MyGeneric(Generic[T]):
         self.arg = arg
 
 
+class Lines(Sequence[str]):
+    """Represent a sequence of text lines.
+
+    It turns out that resolving a class which inherits from a parametrised generic
+    type is... tricky.  See https://github.com/HypothesisWorks/hypothesis/issues/2951
+    """
+
+
+class SpecificDict(Dict[int, int]):
+    pass
+
+
 def using_generic(instance: MyGeneric[T]) -> T:
     return instance.arg
 
@@ -229,7 +255,22 @@ def test_generic_origin_empty():
         find_any(st.builds(using_generic))
 
 
-_skip_callables_mark = pytest.mark.skipif(sys.version_info[:2] < (3, 7), reason="old")
+def test_issue_2951_regression():
+    lines_strat = st.builds(Lines, lines=st.lists(st.text()))
+    with temp_registered(Lines, lines_strat):
+        assert st.from_type(Lines) == lines_strat
+        # Now let's test that the strategy for ``Sequence[int]`` did not
+        # change just because we registered a strategy for ``Lines``:
+        expected = "one_of(binary(), lists(integers()))"
+        assert repr(st.from_type(Sequence[int])) == expected
+
+
+def test_issue_2951_regression_two_params():
+    map_strat = st.builds(SpecificDict, st.dictionaries(st.integers(), st.integers()))
+    expected = repr(st.from_type(Dict[int, int]))
+    with temp_registered(SpecificDict, map_strat):
+        assert st.from_type(SpecificDict) == map_strat
+        assert expected == repr(st.from_type(Dict[int, int]))
 
 
 @pytest.mark.parametrize(
@@ -238,29 +279,16 @@ _skip_callables_mark = pytest.mark.skipif(sys.version_info[:2] < (3, 7), reason=
         Union[str, int],
         Sequence[Sequence[int]],
         MyGeneric[str],
-        # On Python <= 3.6, we always trigger the multi-registration guard clause
-        # and raise InvalidArgument on the first attempted registration.
-        pytest.param(Callable[..., str], marks=_skip_callables_mark),
-        pytest.param(Callable[[int], str], marks=_skip_callables_mark),
+        Callable[..., str],
+        Callable[[int], str],
     ),
     ids=repr,
 )
 @pytest.mark.parametrize("strategy", [st.none(), lambda _: st.none()])
-@checks_deprecated_behaviour
 def test_generic_origin_with_type_args(generic, strategy):
-    try:
-        # Registering a generic type with args is deprecated
+    with pytest.raises(InvalidArgument):
         st.register_type_strategy(generic, strategy)
-        assert generic not in types._global_type_lookup
-        assert generic.__origin__ in types._global_type_lookup
-        # But trying to register another strategy does, since that could be
-        # a symptom of trying multiple registrations for different args
-        with pytest.raises(InvalidArgument):
-            st.register_type_strategy(generic, strategy)
-    finally:
-        st.from_type.__clear_cache()
-        for x in (generic, generic.__origin__):
-            types._global_type_lookup.pop(x, None)
+    assert generic not in types._global_type_lookup
 
 
 @pytest.mark.parametrize(
@@ -282,13 +310,20 @@ def test_generic_origin_without_type_args(generic):
         pass
 
 
-def test_generic_origin_from_type():
+@pytest.mark.parametrize(
+    "strat, type_",
+    [
+        (st.from_type, MyGeneric[T]),
+        (st.from_type, MyGeneric[int]),
+        (st.from_type, MyGeneric),
+        (st.builds, using_generic),
+        (st.builds, using_concrete_generic),
+    ],
+    ids=get_pretty_function_description,
+)
+def test_generic_origin_from_type(strat, type_):
     with temp_registered(MyGeneric, st.builds(MyGeneric)):
-        find_any(st.from_type(MyGeneric[T]))
-        find_any(st.from_type(MyGeneric[int]))
-        find_any(st.from_type(MyGeneric))
-        find_any(st.builds(using_generic))
-        find_any(st.builds(using_concrete_generic))
+        find_any(strat(type_))
 
 
 def test_generic_origin_concrete_builds():
@@ -296,3 +331,98 @@ def test_generic_origin_concrete_builds():
         assert_all_examples(
             st.builds(using_generic), lambda example: isinstance(example, int)
         )
+
+
+class AbstractFoo(abc.ABC):
+    def __init__(self, x):
+        pass
+
+    @abc.abstractmethod
+    def qux(self):
+        pass
+
+
+class ConcreteFoo1(AbstractFoo):
+    # Can't resolve this one due to unannotated `x` param
+    def qux(self):
+        pass
+
+
+class ConcreteFoo2(AbstractFoo):
+    def __init__(self, x: int):
+        pass
+
+    def qux(self):
+        pass
+
+
+@given(st.from_type(AbstractFoo))
+def test_gen_abstract(foo):
+    # This requires that we correctly checked which of the subclasses
+    # could be resolved, rather than unconditionally using all of them.
+    assert isinstance(foo, ConcreteFoo2)
+
+
+class AbstractBar(abc.ABC):
+    def __init__(self, x):
+        pass
+
+    @abc.abstractmethod
+    def qux(self):
+        pass
+
+
+class ConcreteBar(AbstractBar):
+    def qux(self):
+        pass
+
+
+def test_abstract_resolver_fallback():
+    # We create our distinct strategies for abstract and concrete types
+    gen_abstractbar = _from_type(AbstractBar)
+    gen_concretebar = st.builds(ConcreteBar, x=st.none())
+    assert gen_abstractbar != gen_concretebar
+
+    # And trying to generate an instance of the abstract type fails,
+    # UNLESS the concrete type is currently resolvable
+    with pytest.raises(ResolutionFailed):
+        gen_abstractbar.example()
+    with temp_registered(ConcreteBar, gen_concretebar):
+        gen = gen_abstractbar.example()
+    with pytest.raises(ResolutionFailed):
+        gen_abstractbar.example()
+
+    # which in turn means we resolve to the concrete subtype.
+    assert isinstance(gen, ConcreteBar)
+
+
+def _one_arg(x: int):
+    assert isinstance(x, int)
+
+
+def _multi_arg(x: int, y: str):
+    assert isinstance(x, int)
+    assert isinstance(y, str)
+
+
+def _kwd_only(*, y: str):
+    assert isinstance(y, str)
+
+
+def _pos_and_kwd_only(x: int, *, y: str):
+    assert isinstance(x, int)
+    assert isinstance(y, str)
+
+
+@pytest.mark.parametrize("func", [_one_arg, _multi_arg, _kwd_only, _pos_and_kwd_only])
+def test_infer_all(func):
+    # tests @given(...) against various signatures
+    settings(max_examples=1)(given(...))(func)()
+
+
+def test_does_not_add_param_empty_to_type_hints():
+    def f(x):
+        pass
+
+    f.__signature__ = Signature([P("y", P.KEYWORD_ONLY)], return_annotation=None)
+    assert get_type_hints(f) == {}

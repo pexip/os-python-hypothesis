@@ -1,83 +1,116 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import codecs
-import importlib
 import inspect
 import platform
 import sys
 import typing
+from functools import partial
+from typing import Any, ForwardRef, Tuple
+
+try:
+    from typing import get_args as get_args
+except ImportError:
+    # remove at Python 3.7 end-of-life
+    from collections.abc import Callable as _Callable
+
+    def get_args(
+        tp: Any,
+    ) -> Tuple[Any, ...]:  # pragma: no cover
+        """
+        Examples
+        --------
+        >>> assert get_args(int) == ()
+        >>> assert get_args(Dict[str, int]) == (str, int)
+        >>> assert get_args(Union[int, Union[T, int], str][int]) == (int, str)
+        >>> assert get_args(Union[int, Tuple[T, int]][str]) == (int, Tuple[str, int])
+        >>> assert get_args(Callable[[], T][int]) == ([], int)
+        """
+        if hasattr(tp, "__origin__") and hasattr(tp, "__args__"):
+            args = tp.__args__
+            if (
+                getattr(tp, "__origin__", None) is _Callable
+                and args
+                and args[0] is not Ellipsis
+            ):
+                args = (list(args[:-1]), args[-1])
+            return args
+        return ()
+
+
+try:
+    from typing import get_origin as get_origin
+except ImportError:
+    # remove at Python 3.7 end-of-life
+    from collections.abc import Callable as _Callable
+
+    def get_origin(tp: Any) -> typing.Optional[Any]:  # pragma: no cover
+        """Get the unsubscripted version of a type.
+        This supports generic types, Callable, Tuple, Union, Literal, Final and ClassVar.
+        Return None for unsupported types. Examples::
+            get_origin(Literal[42]) is Literal
+            get_origin(int) is None
+            get_origin(ClassVar[int]) is ClassVar
+            get_origin(Generic) is Generic
+            get_origin(Generic[T]) is Generic
+            get_origin(Union[T, int]) is Union
+            get_origin(List[Tuple[T, T]][int]) == list
+        """
+        if hasattr(tp, "__origin__"):
+            return tp.__origin__
+        if tp is typing.Generic:
+            return typing.Generic
+        return None
+
+
+try:
+    BaseExceptionGroup = BaseExceptionGroup
+    ExceptionGroup = ExceptionGroup  # pragma: no cover
+except NameError:
+    from exceptiongroup import (
+        BaseExceptionGroup as BaseExceptionGroup,
+        ExceptionGroup as ExceptionGroup,
+    )
+if typing.TYPE_CHECKING:  # pragma: no cover
+    from typing_extensions import Concatenate as Concatenate, ParamSpec as ParamSpec
+else:
+    try:
+        from typing import Concatenate as Concatenate, ParamSpec as ParamSpec
+    except ImportError:
+        try:
+            from typing_extensions import (
+                Concatenate as Concatenate,
+                ParamSpec as ParamSpec,
+            )
+        except ImportError:
+            Concatenate, ParamSpec = None, None
 
 PYPY = platform.python_implementation() == "PyPy"
 WINDOWS = platform.system() == "Windows"
 
 
-def bit_length(n):
-    return n.bit_length()
-
-
-def str_to_bytes(s):
-    return s.encode(a_good_encoding())
-
-
-def escape_unicode_characters(s):
+def escape_unicode_characters(s: str) -> str:
     return codecs.encode(s, "unicode_escape").decode("ascii")
 
 
-def int_from_bytes(data):
+def int_from_bytes(data: typing.Union[bytes, bytearray]) -> int:
     return int.from_bytes(data, "big")
 
 
-def int_to_bytes(i, size):
+def int_to_bytes(i: int, size: int) -> bytes:
     return i.to_bytes(size, "big")
 
 
-def int_to_byte(i):
+def int_to_byte(i: int) -> bytes:
     return bytes([i])
-
-
-def a_good_encoding():
-    return "utf-8"
-
-
-def to_unicode(x):
-    if isinstance(x, str):
-        return x
-    else:
-        return x.decode(a_good_encoding())
-
-
-def qualname(f):
-    try:
-        return f.__qualname__
-    except AttributeError:
-        return f.__name__
-
-
-try:
-    # These types are new in Python 3.7, but also (partially) backported to the
-    # typing backport on PyPI.  Use if possible; or fall back to older names.
-    typing_root_type = (typing._Final, typing._GenericAlias)  # type: ignore
-    ForwardRef = typing.ForwardRef  # type: ignore
-except AttributeError:
-    typing_root_type = (typing.TypingMeta, typing.TypeVar)  # type: ignore
-    try:
-        typing_root_type += (typing._Union,)  # type: ignore
-    except AttributeError:
-        pass
-    ForwardRef = typing._ForwardRef  # type: ignore
 
 
 def is_typed_named_tuple(cls):
@@ -95,6 +128,10 @@ def is_typed_named_tuple(cls):
     )
 
 
+def _hint_and_args(x):
+    return (x,) + get_args(x)
+
+
 def get_type_hints(thing):
     """Like the typing version, but tries harder and never errors.
 
@@ -108,44 +145,62 @@ def get_type_hints(thing):
     Never errors: instead of raising TypeError for uninspectable objects, or
     NameError for unresolvable forward references, just return an empty dict.
     """
+    if isinstance(thing, partial):
+        from hypothesis.internal.reflection import get_signature
+
+        bound = set(get_signature(thing.func).parameters).difference(
+            get_signature(thing).parameters
+        )
+        return {k: v for k, v in get_type_hints(thing.func).items() if k not in bound}
+
+    kwargs = {} if sys.version_info[:2] < (3, 9) else {"include_extras": True}
+
     try:
-        hints = typing.get_type_hints(thing)
-    except (AttributeError, TypeError, NameError):
+        hints = typing.get_type_hints(thing, **kwargs)
+    except (AttributeError, TypeError, NameError):  # pragma: no cover
         hints = {}
 
-    if not inspect.isclass(thing):
-        return hints
-
-    try:
-        hints.update(typing.get_type_hints(thing.__init__))
-    except (TypeError, NameError, AttributeError):
-        pass
+    if inspect.isclass(thing):
+        try:
+            hints.update(typing.get_type_hints(thing.__init__, **kwargs))
+        except (TypeError, NameError, AttributeError):
+            pass
 
     try:
         if hasattr(thing, "__signature__"):
             # It is possible for the signature and annotations attributes to
             # differ on an object due to renamed arguments.
-            # To prevent missing arguments we use the signature to provide any type
-            # hints it has and then override any common names with the more
-            # comprehensive type information from get_type_hints
-            # See https://github.com/HypothesisWorks/hypothesis/pull/2580
-            # for more details.
+            from hypothesis.internal.reflection import get_signature
             from hypothesis.strategies._internal.types import is_a_type
 
             vkinds = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
-            for p in inspect.signature(thing).parameters.values():
-                if p.kind not in vkinds and is_a_type(p.annotation):
+            for p in get_signature(thing).parameters.values():
+                if (
+                    p.kind not in vkinds
+                    and is_a_type(p.annotation)
+                    and p.annotation is not p.empty
+                ):
+                    p_hint = p.annotation
+
+                    # Defer to `get_type_hints` if signature annotation is, or
+                    # contains, a forward reference that is otherwise resolved.
+                    if any(
+                        isinstance(sig_hint, ForwardRef)
+                        and not isinstance(hint, ForwardRef)
+                        for sig_hint, hint in zip(
+                            _hint_and_args(p.annotation),
+                            _hint_and_args(hints.get(p.name, Any)),
+                        )
+                    ):
+                        p_hint = hints[p.name]
                     if p.default is None:
-                        hints[p.name] = typing.Optional[p.annotation]
+                        hints[p.name] = typing.Optional[p_hint]
                     else:
-                        hints[p.name] = p.annotation
-    except (AttributeError, TypeError, NameError):
+                        hints[p.name] = p_hint
+    except (AttributeError, TypeError, NameError):  # pragma: no cover
         pass
 
     return hints
-
-
-importlib_invalidate_caches = getattr(importlib, "invalidate_caches", lambda: ())
 
 
 def update_code_location(code, newfile, newlineno):
@@ -164,40 +219,31 @@ def update_code_location(code, newfile, newlineno):
         # added to facilitate future-proof code.  See BPO-37032 for details.
         return code.replace(co_filename=newfile, co_firstlineno=newlineno)
 
-    # This field order is accurate for 3.5 - 3.7, but not 3.8 when a new field
-    # was added for positional-only arguments.  However it also added a .replace()
-    # method that we use instead of field indices, so they're fine as-is.
-    CODE_FIELD_ORDER = [
-        "co_argcount",
-        "co_kwonlyargcount",
-        "co_nlocals",
-        "co_stacksize",
-        "co_flags",
-        "co_code",
-        "co_consts",
-        "co_names",
-        "co_varnames",
-        "co_filename",
-        "co_name",
-        "co_firstlineno",
-        "co_lnotab",
-        "co_freevars",
-        "co_cellvars",
-    ]
-    unpacked = [getattr(code, name) for name in CODE_FIELD_ORDER]
-    unpacked[CODE_FIELD_ORDER.index("co_filename")] = newfile
-    unpacked[CODE_FIELD_ORDER.index("co_firstlineno")] = newlineno
-    return type(code)(*unpacked)
-
-
-def cast_unicode(s, encoding=None):
-    if isinstance(s, bytes):
-        return s.decode(encoding or a_good_encoding(), "replace")
-    return s
-
-
-def get_stream_enc(stream, default=None):
-    return getattr(stream, "encoding", None) or default
+    else:  # pragma: no cover
+        # This field order is accurate for 3.5 - 3.7, but not 3.8 when a new field
+        # was added for positional-only arguments.  However it also added a .replace()
+        # method that we use instead of field indices, so they're fine as-is.
+        CODE_FIELD_ORDER = [
+            "co_argcount",
+            "co_kwonlyargcount",
+            "co_nlocals",
+            "co_stacksize",
+            "co_flags",
+            "co_code",
+            "co_consts",
+            "co_names",
+            "co_varnames",
+            "co_filename",
+            "co_name",
+            "co_firstlineno",
+            "co_lnotab",
+            "co_freevars",
+            "co_cellvars",
+        ]
+        unpacked = [getattr(code, name) for name in CODE_FIELD_ORDER]
+        unpacked[CODE_FIELD_ORDER.index("co_filename")] = newfile
+        unpacked[CODE_FIELD_ORDER.index("co_firstlineno")] = newlineno
+        return type(code)(*unpacked)
 
 
 # Under Python 2, math.floor and math.ceil returned floats, which cannot
@@ -223,9 +269,10 @@ def ceil(x):
 def bad_django_TestCase(runner):
     if runner is None or "django.test" not in sys.modules:
         return False
-    if not isinstance(runner, sys.modules["django.test"].TransactionTestCase):
-        return False
+    else:  # pragma: no cover
+        if not isinstance(runner, sys.modules["django.test"].TransactionTestCase):
+            return False
 
-    from hypothesis.extra.django._impl import HypothesisTestCase
+        from hypothesis.extra.django._impl import HypothesisTestCase
 
-    return not isinstance(runner, HypothesisTestCase)
+        return not isinstance(runner, HypothesisTestCase)

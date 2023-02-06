@@ -1,30 +1,22 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network, ip_network
 from typing import Optional, Union
 
 from hypothesis.errors import InvalidArgument
 from hypothesis.internal.validation import check_type
-from hypothesis.strategies._internal.core import (
-    SearchStrategy,
-    binary,
-    defines_strategy,
-    integers,
-    sampled_from,
-)
+from hypothesis.strategies._internal.core import binary, sampled_from
+from hypothesis.strategies._internal.numbers import integers
+from hypothesis.strategies._internal.strategies import SearchStrategy
+from hypothesis.strategies._internal.utils import defines_strategy
 
 # See https://www.iana.org/assignments/iana-ipv4-special-registry/
 SPECIAL_IPv4_RANGES = (
@@ -100,8 +92,8 @@ def ip_addresses(
     """
     if v is not None:
         check_type(int, v, "v")
-        if v != 4 and v != 6:
-            raise InvalidArgument("v=%r, but only v=4 or v=6 are valid" % (v,))
+        if v not in (4, 6):
+            raise InvalidArgument(f"v={v!r}, but only v=4 or v=6 are valid")
     if network is None:
         # We use the reserved-address registries to boost the chance
         # of generating one of the various special types of address.
@@ -121,6 +113,6 @@ def ip_addresses(
     check_type((IPv4Network, IPv6Network), network, "network")
     assert isinstance(network, (IPv4Network, IPv6Network))  # for Mypy
     if v not in (None, network.version):
-        raise InvalidArgument("v=%r is incompatible with network=%r" % (v, network))
+        raise InvalidArgument(f"v={v!r} is incompatible with network={network!r}")
     addr_type = IPv4Address if network.version == 4 else IPv6Address
     return integers(int(network[0]), int(network[-1])).map(addr_type)  # type: ignore

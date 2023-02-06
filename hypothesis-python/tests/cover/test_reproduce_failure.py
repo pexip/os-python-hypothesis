@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import base64
 import re
@@ -31,6 +26,7 @@ from hypothesis import (
 )
 from hypothesis.core import decode_failure, encode_failure
 from hypothesis.errors import DidNotReproduce, InvalidArgument, UnsatisfiedAssumption
+
 from tests.common.utils import capture_out, no_shrink
 
 
@@ -54,7 +50,7 @@ def test_decoding_may_fail(t):
     except InvalidArgument:
         pass
     except Exception as e:
-        assert False, "decoding failed with %r, not InvalidArgument" % (e,)
+        raise AssertionError("Expected an InvalidArgument exception") from e
 
 
 def test_invalid_base_64_gives_invalid_argument():
@@ -132,13 +128,13 @@ def test_prints_reproduction_if_requested():
             failing_example[0] = i
         assert i not in failing_example
 
-    with capture_out() as o:
-        with pytest.raises(AssertionError):
-            test()
-    assert "@reproduce_failure" in o.getvalue()
+    with pytest.raises(AssertionError) as err:
+        test()
+    notes = "\n".join(err.value.__notes__)
+    assert "@reproduce_failure" in notes
 
     exp = re.compile(r"reproduce_failure\(([^)]+)\)", re.MULTILINE)
-    extract = exp.search(o.getvalue())
+    extract = exp.search(notes)
     reproduction = eval(extract.group(0))
     test = reproduction(test)
 
@@ -150,7 +146,7 @@ def test_does_not_print_reproduction_for_simple_examples_by_default():
     @settings(print_blob=False)
     @given(st.integers())
     def test(i):
-        assert False
+        raise AssertionError
 
     with capture_out() as o:
         with pytest.raises(AssertionError):
@@ -163,7 +159,7 @@ def test_does_not_print_reproduction_for_simple_data_examples_by_default():
     @given(st.data())
     def test(data):
         data.draw(st.integers())
-        assert False
+        raise AssertionError
 
     with capture_out() as o:
         with pytest.raises(AssertionError):

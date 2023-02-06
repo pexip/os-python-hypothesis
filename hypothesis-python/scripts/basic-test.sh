@@ -13,7 +13,7 @@ for k, v in sorted(dict(os.environ).items()):
 pip install .
 
 
-PYTEST="python -m pytest -n2"
+PYTEST="python -bb -X dev -m pytest -nauto --durations-min=1.0"
 
 # Run all the no-extra-dependency tests for this version (except slow nocover tests)
 $PYTEST tests/cover tests/pytest
@@ -27,27 +27,42 @@ pip install ".[dpcontracts]"
 $PYTEST tests/dpcontracts/
 pip uninstall -y dpcontracts
 
-pip install fakeredis
+pip install "$(grep 'fakeredis==' ../requirements/coverage.txt)"
 $PYTEST tests/redis/
 pip uninstall -y redis fakeredis
 
-pip install typing_extensions
+pip install "$(grep 'typing-extensions==' ../requirements/coverage.txt)"
 $PYTEST tests/typing_extensions/
-pip uninstall -y typing_extensions
+if [ "$(python -c 'import sys; print(sys.version_info[:2] == (3, 7))')" = "False" ] ; then
+  # Required by importlib_metadata backport, which we don't want to break
+  pip uninstall -y typing_extensions
+fi
 
 pip install ".[lark]"
+pip install "$(grep -oE 'lark>=([0-9.]+)' ../hypothesis-python/setup.py | tr '>' =)"
+$PYTEST -Wignore tests/lark/
+pip install "$(grep 'lark==' ../requirements/coverage.txt)"
 $PYTEST tests/lark/
-pip install lark-parser==0.7.1
-$PYTEST tests/lark/
-pip uninstall -y lark-parser
+pip uninstall -y lark
 
-if [ "$(python -c 'import sys, platform; print(sys.version_info[:2] >= (3, 6) and platform.python_implementation() != "PyPy")')" = "True" ] ; then
-  pip install black numpy
+if [ "$(python -c $'import platform, sys; print(sys.version_info.releaselevel == \'final\' and platform.python_implementation() != "PyPy")')" = "True" ] ; then
+  pip install ".[codemods,cli]"
+  $PYTEST tests/codemods/
+  pip uninstall -y libcst click
+
+  if [ "$(python -c 'import sys; print(sys.version_info[:2] == (3, 7))')" = "True" ] ; then
+    # Per NEP-29, this is the last version to support Python 3.7
+    pip install numpy==1.21.5
+  else
+    pip install "$(grep 'numpy==' ../requirements/coverage.txt)"
+  fi
+
+  pip install "$(grep 'black==' ../requirements/coverage.txt)"
   $PYTEST tests/ghostwriter/
   pip uninstall -y black numpy
 fi
 
-if [ "$(python -c 'import sys; print(sys.version_info[:2] == (3, 8))')" = "False" ] ; then
+if [ "$(python -c 'import sys; print(sys.version_info[:2] == (3, 10))')" = "False" ] ; then
   exit 0
 fi
 
@@ -55,7 +70,10 @@ $PYTEST tests/nocover/
 
 # Run some tests without docstrings or assertions, to catch bugs
 # like issue #822 in one of the test decorators.  See also #1541.
-PYTHONOPTIMIZE=2 $PYTEST tests/cover/test_testdecorators.py
+PYTHONOPTIMIZE=2 $PYTEST \
+    -W'ignore:assertions not in test modules or plugins will be ignored because assert statements are not executed by the underlying Python interpreter:pytest.PytestConfigWarning' \
+    -W'ignore:Module already imported so cannot be rewritten:pytest.PytestAssertRewriteWarning' \
+    tests/cover/test_testdecorators.py
 
 if [ "$(python -c 'import platform; print(platform.python_implementation())')" != "PyPy" ]; then
   pip install .[django]
@@ -63,9 +81,10 @@ if [ "$(python -c 'import platform; print(platform.python_implementation())')" !
   HYPOTHESIS_DJANGO_USETZ=FALSE python -m tests.django.manage test tests.django
   pip uninstall -y django pytz
 
-  pip install numpy
+  pip install "$(grep 'numpy==' ../requirements/coverage.txt)"
+  $PYTEST tests/array_api
   $PYTEST tests/numpy
 
-  pip install pandas
+  pip install "$(grep 'pandas==' ../requirements/coverage.txt)"
   $PYTEST tests/pandas
 fi

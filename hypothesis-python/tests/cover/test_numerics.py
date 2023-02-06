@@ -1,26 +1,21 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import decimal
 from math import copysign, inf
 
 import pytest
 
-from hypothesis import assume, given, reject, settings
-from hypothesis.errors import HypothesisDeprecationWarning, InvalidArgument
-from hypothesis.internal.floats import next_down
+from hypothesis import HealthCheck, assume, given, reject, settings
+from hypothesis.errors import InvalidArgument
+from hypothesis.internal.floats import next_down, next_up
 from hypothesis.strategies import (
     booleans,
     data,
@@ -29,35 +24,38 @@ from hypothesis.strategies import (
     fractions,
     integers,
     none,
+    sampled_from,
     tuples,
 )
+
 from tests.common.debug import find_any
 
 
+@settings(suppress_health_check=HealthCheck.all())
 @given(data())
 def test_fuzz_floats_bounds(data):
-    bound = none() | floats(allow_nan=False)
+    width = data.draw(sampled_from([64, 32, 16]))
+    bound = none() | floats(allow_nan=False, width=width)
     low, high = data.draw(tuples(bound, bound), label="low, high")
+    if low is not None and high is not None and low > high:
+        low, high = high, low
     if low is not None and high is not None and low > high:
         low, high = high, low
     exmin = low is not None and low != inf and data.draw(booleans(), label="ex_min")
     exmax = high is not None and high != -inf and data.draw(booleans(), label="ex_max")
-    try:
-        val = data.draw(
-            floats(low, high, exclude_min=exmin, exclude_max=exmax), label="value"
-        )
-        assume(val)  # positive/negative zero is an issue
-    except (InvalidArgument, HypothesisDeprecationWarning):
-        assert (
-            (exmin and exmax and low == next_down(high))
-            or (low == high and (exmin or exmax))
-            or (
-                low == high == 0
-                and copysign(1.0, low) == 1
-                and copysign(1.0, high) == -1
-            )
-        )
-        reject()  # no floats in required range
+
+    if low is not None and high is not None:
+        lo = next_up(low, width) if exmin else low
+        hi = next_down(high, width) if exmax else high
+        # There must actually be floats between these bounds
+        assume(lo <= hi)
+        if lo == hi == 0:
+            assume(not exmin and not exmax and copysign(1.0, lo) <= copysign(1.0, hi))
+
+    s = floats(low, high, exclude_min=exmin, exclude_max=exmax, width=width)
+    val = data.draw(s, label="value")
+    assume(val)  # positive/negative zero is an issue
+
     if low is not None:
         assert low <= val
     if high is not None:
@@ -129,7 +127,7 @@ def test_decimals_include_nan():
 
 
 def test_decimals_include_inf():
-    find_any(decimals(), lambda x: x.is_infinite(), settings(max_examples=10 ** 6))
+    find_any(decimals(), lambda x: x.is_infinite(), settings(max_examples=10**6))
 
 
 @given(decimals(allow_nan=False))
@@ -174,3 +172,30 @@ def test_consistent_decimal_error():
         with decimal.localcontext(decimal.Context(traps=[])):
             decimals(bad).example()
     assert str(excinfo.value) == str(excinfo2.value)
+
+
+@pytest.mark.parametrize(
+    "s, msg",
+    [
+        (
+            floats(min_value=inf, allow_infinity=False),
+            "allow_infinity=False excludes min_value=inf",
+        ),
+        (
+            floats(min_value=next_down(inf), exclude_min=True, allow_infinity=False),
+            "exclude_min=True turns min_value=.+? into inf, but allow_infinity=False",
+        ),
+        (
+            floats(max_value=-inf, allow_infinity=False),
+            "allow_infinity=False excludes max_value=-inf",
+        ),
+        (
+            floats(max_value=next_up(-inf), exclude_max=True, allow_infinity=False),
+            "exclude_max=True turns max_value=.+? into -inf, but allow_infinity=False",
+        ),
+    ],
+)
+def test_floats_message(s, msg):
+    # https://github.com/HypothesisWorks/hypothesis/issues/3207
+    with pytest.raises(InvalidArgument, match=msg):
+        s.validate()

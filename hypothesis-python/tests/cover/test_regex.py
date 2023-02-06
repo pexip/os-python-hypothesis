@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import re
 import sys
@@ -30,7 +25,9 @@ from hypothesis.strategies._internal.regex import (
     UNICODE_SPACE_CHARS,
     UNICODE_WORD_CATEGORIES,
     base_regex_strategy,
+    regex_strategy,
 )
+
 from tests.common.debug import assert_all_examples, assert_no_examples, find_any
 
 
@@ -178,14 +175,14 @@ def test_any_doesnt_generate_newline():
 @pytest.mark.parametrize("pattern", [re.compile("\\A.\\Z", re.DOTALL), "(?s)\\A.\\Z"])
 def test_any_with_dotall_generate_newline(pattern):
     find_any(
-        st.from_regex(pattern), lambda s: s == "\n", settings(max_examples=10 ** 6)
+        st.from_regex(pattern), lambda s: s == "\n", settings(max_examples=10**6)
     )
 
 
 @pytest.mark.parametrize("pattern", [re.compile(b"\\A.\\Z", re.DOTALL), b"(?s)\\A.\\Z"])
 def test_any_with_dotall_generate_newline_binary(pattern):
     find_any(
-        st.from_regex(pattern), lambda s: s == b"\n", settings(max_examples=10 ** 6)
+        st.from_regex(pattern), lambda s: s == b"\n", settings(max_examples=10**6)
     )
 
 
@@ -211,7 +208,7 @@ def test_groups(pattern, is_unicode, invert):
         def group_pred(s):
             return not _p(s)
 
-    pattern = "^%s\\Z" % (pattern,)
+    pattern = f"^{pattern}\\Z"
 
     compiler = unicode_regex if is_unicode else ascii_regex
     strategy = st.from_regex(compiler(pattern))
@@ -424,20 +421,24 @@ def test_fullmatch_generates_example(pattern, matching_str):
     find_any(
         st.from_regex(pattern, fullmatch=True),
         lambda s: s == matching_str,
-        settings(max_examples=10 ** 6),
+        settings(max_examples=10**6),
     )
 
 
 @pytest.mark.parametrize(
     "pattern,eqiv_pattern",
     [
+        (r"", r"\A\Z"),
+        (b"", rb"\A\Z"),
+        (r"(?#comment)", r"\A\Z"),
+        (rb"(?#comment)", rb"\A\Z"),
         ("a", "\\Aa\\Z"),
         ("[Aa]", "\\A[Aa]\\Z"),
         ("[ab]*", "\\A[ab]*\\Z"),
-        (b"[Aa]", br"\A[Aa]\Z"),
-        (b"[ab]*", br"\A[ab]*\Z"),
+        (b"[Aa]", rb"\A[Aa]\Z"),
+        (b"[ab]*", rb"\A[ab]*\Z"),
         (re.compile("[ab]*", re.IGNORECASE), re.compile("\\A[ab]*\\Z", re.IGNORECASE)),
-        (re.compile(br"[ab]", re.IGNORECASE), re.compile(br"\A[ab]\Z", re.IGNORECASE)),
+        (re.compile(rb"[ab]", re.IGNORECASE), re.compile(rb"\A[ab]\Z", re.IGNORECASE)),
     ],
 )
 def test_fullmatch_matches(pattern, eqiv_pattern):
@@ -461,4 +462,13 @@ def test_sets_allow_multichar_output_in_ignorecase_mode():
     find_any(
         st.from_regex(re.compile("[\u0130_]", re.IGNORECASE)),
         lambda s: len(s) > 1,
+    )
+
+
+def test_internals_can_disable_newline_from_dollar_for_jsonschema():
+    pattern = "^abc$"
+    find_any(st.from_regex(pattern), lambda s: s == "abc\n")
+    assert_all_examples(
+        regex_strategy(pattern, False, _temp_jsonschema_hack_no_end_newline=True),
+        lambda s: s == "abc",
     )

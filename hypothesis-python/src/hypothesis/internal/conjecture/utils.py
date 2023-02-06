@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import enum
 import hashlib
@@ -19,30 +14,30 @@ import heapq
 import math
 import sys
 from collections import OrderedDict, abc
+from functools import lru_cache
+from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple, Type, TypeVar, Union
 
 from hypothesis.errors import InvalidArgument
-from hypothesis.internal.compat import (
-    bit_length,
-    floor,
-    int_from_bytes,
-    qualname,
-    str_to_bytes,
-)
-from hypothesis.internal.floats import int_to_float
+from hypothesis.internal.compat import floor, int_from_bytes
+from hypothesis.internal.floats import int_to_float, next_up
 
-LABEL_MASK = 2 ** 64 - 1
+if TYPE_CHECKING:
+    from hypothesis.internal.conjecture.data import ConjectureData
 
 
-def calc_label_from_name(name):
-    hashed = hashlib.sha384(str_to_bytes(name)).digest()
+LABEL_MASK = 2**64 - 1
+
+
+def calc_label_from_name(name: str) -> int:
+    hashed = hashlib.sha384(name.encode()).digest()
     return int_from_bytes(hashed[:8])
 
 
-def calc_label_from_cls(cls):
-    return calc_label_from_name(qualname(cls))
+def calc_label_from_cls(cls: type) -> int:
+    return calc_label_from_name(cls.__qualname__)
 
 
-def combine_labels(*labels):
+def combine_labels(*labels: int) -> int:
     label = 0
     for l in labels:
         label = (label << 1) & LABEL_MASK
@@ -53,12 +48,29 @@ def combine_labels(*labels):
 INTEGER_RANGE_DRAW_LABEL = calc_label_from_name("another draw in integer_range()")
 BIASED_COIN_LABEL = calc_label_from_name("biased_coin()")
 BIASED_COIN_INNER_LABEL = calc_label_from_name("inside biased_coin()")
-SAMPLE_IN_SAMPLER_LABLE = calc_label_from_name("a sample() in Sampler")
+SAMPLE_IN_SAMPLER_LABEL = calc_label_from_name("a sample() in Sampler")
 ONE_FROM_MANY_LABEL = calc_label_from_name("one more from many()")
 
 
-def integer_range(data, lower, upper, center=None):
+def unbounded_integers(data: "ConjectureData") -> int:
+    size = INT_SIZES[INT_SIZES_SAMPLER.sample(data)]
+    r = data.draw_bits(size)
+    sign = r & 1
+    r >>= 1
+    if sign:
+        r = -r
+    return int(r)
+
+
+def integer_range(
+    data: "ConjectureData",
+    lower: int,
+    upper: int,
+    center: Optional[int] = None,
+    forced: Optional[int] = None,
+) -> int:
     assert lower <= upper
+    assert forced is None or lower <= forced <= upper
     if lower == upper:
         # Write a value even when this is trivial so that when a bound depends
         # on other values we don't suddenly disappear when the gap shrinks to
@@ -76,7 +88,8 @@ def integer_range(data, lower, upper, center=None):
     elif center == lower:
         above = True
     else:
-        above = boolean(data)
+        force_above = None if forced is None else forced < center
+        above = not data.draw_bits(1, forced=force_above)
 
     if above:
         gap = upper - center
@@ -85,20 +98,21 @@ def integer_range(data, lower, upper, center=None):
 
     assert gap > 0
 
-    bits = bit_length(gap)
+    bits = gap.bit_length()
     probe = gap + 1
 
-    if bits > 24 and data.draw_bits(3):
+    if bits > 24 and data.draw_bits(3, forced=None if forced is None else 0):
         # For large ranges, we combine the uniform random distribution from draw_bits
-        # with the weighting scheme used by WideRangeIntStrategy with moderate chance.
-        # Cutoff at 2 ** 24 so unicode choice is uniform but 32bit distribution is not.
-        idx = Sampler([4.0, 8.0, 1.0, 1.0, 0.5]).sample(data)
-        sizes = [8, 16, 32, 64, 128]
-        bits = min(bits, sizes[idx])
+        # with a weighting scheme with moderate chance.  Cutoff at 2 ** 24 so that our
+        # choice of unicode characters is uniform but the 32bit distribution is not.
+        idx = INT_SIZES_SAMPLER.sample(data)
+        bits = min(bits, INT_SIZES[idx])
 
     while probe > gap:
         data.start_example(INTEGER_RANGE_DRAW_LABEL)
-        probe = data.draw_bits(bits)
+        probe = data.draw_bits(
+            bits, forced=None if forced is None else abs(forced - center)
+        )
         data.stop_example(discard=probe > gap)
 
     if above:
@@ -107,42 +121,44 @@ def integer_range(data, lower, upper, center=None):
         result = center - probe
 
     assert lower <= result <= upper
-    return int(result)
+    assert forced is None or result == forced, (result, forced, center, above)
+    return result
 
 
-def check_sample(values, strategy_name):
+T = TypeVar("T")
+
+
+def check_sample(
+    values: Union[Type[enum.Enum], Sequence[T]], strategy_name: str
+) -> Sequence[T]:
     if "numpy" in sys.modules and isinstance(values, sys.modules["numpy"].ndarray):
         if values.ndim != 1:
             raise InvalidArgument(
-                (
-                    "Only one-dimensional arrays are supported for sampling, "
-                    "and the given value has {ndim} dimensions (shape "
-                    "{shape}).  This array would give samples of array slices "
-                    "instead of elements!  Use np.ravel(values) to convert "
-                    "to a one-dimensional array, or tuple(values) if you "
-                    "want to sample slices."
-                ).format(ndim=values.ndim, shape=values.shape)
+                "Only one-dimensional arrays are supported for sampling, "
+                f"and the given value has {values.ndim} dimensions (shape "
+                f"{values.shape}).  This array would give samples of array slices "
+                "instead of elements!  Use np.ravel(values) to convert "
+                "to a one-dimensional array, or tuple(values) if you "
+                "want to sample slices."
             )
     elif not isinstance(values, (OrderedDict, abc.Sequence, enum.EnumMeta)):
         raise InvalidArgument(
-            "Cannot sample from {values}, not an ordered collection. "
-            "Hypothesis goes to some length to ensure that the {strategy} "
+            f"Cannot sample from {values!r}, not an ordered collection. "
+            f"Hypothesis goes to some length to ensure that the {strategy_name} "
             "strategy has stable results between runs. To replay a saved "
             "example, the sampled values must have the same iteration order "
             "on every run - ruling out sets, dicts, etc due to hash "
-            "randomisation. Most cases can simply use `sorted(values)`, but "
+            "randomization. Most cases can simply use `sorted(values)`, but "
             "mixed types or special values such as math.nan require careful "
             "handling - and note that when simplifying an example, "
-            "Hypothesis treats earlier values as simpler.".format(
-                values=repr(values), strategy=strategy_name
-            )
+            "Hypothesis treats earlier values as simpler."
         )
     if isinstance(values, range):
         return values
     return tuple(values)
 
 
-def choice(data, values):
+def choice(data: "ConjectureData", values: Sequence[T]) -> T:
     return values[integer_range(data, 0, len(values) - 1)]
 
 
@@ -150,15 +166,13 @@ FLOAT_PREFIX = 0b1111111111 << 52
 FULL_FLOAT = int_to_float(FLOAT_PREFIX | ((2 << 53) - 1)) - 1
 
 
-def fractional_float(data):
+def fractional_float(data: "ConjectureData") -> float:
     return (int_to_float(FLOAT_PREFIX | data.draw_bits(52)) - 1) / FULL_FLOAT
 
 
-def boolean(data):
-    return bool(data.draw_bits(1))
-
-
-def biased_coin(data, p, *, forced=None):
+def biased_coin(
+    data: "ConjectureData", p: float, *, forced: Optional[bool] = None
+) -> bool:
     """Return True with probability p (assuming a uniform generator),
     shrinking towards False. If ``forced`` is set to a non-None value, this
     will always return that value but will write choices appropriate to having
@@ -186,7 +200,7 @@ def biased_coin(data, p, *, forced=None):
         p = 0.0
         bits = 1
 
-    size = 2 ** bits
+    size = 2**bits
 
     data.start_example(BIASED_COIN_LABEL)
     while True:
@@ -294,30 +308,31 @@ class Sampler:
        shrinking the chosen element.
     """
 
-    def __init__(self, weights):
+    table: List[Tuple[int, int, float]]  # (base_idx, alt_idx, alt_chance)
 
+    def __init__(self, weights: Sequence[float]):
         n = len(weights)
 
-        self.table = [[i, None, None] for i in range(n)]
+        table: "list[list[int | float | None]]" = [[i, None, None] for i in range(n)]
 
         total = sum(weights)
 
         num_type = type(total)
 
-        zero = num_type(0)
-        one = num_type(1)
+        zero = num_type(0)  # type: ignore
+        one = num_type(1)  # type: ignore
 
-        small = []
-        large = []
+        small: "List[int]" = []
+        large: "List[int]" = []
 
         probabilities = [w / total for w in weights]
-        scaled_probabilities = []
+        scaled_probabilities: "List[float]" = []
 
-        for i, p in enumerate(probabilities):
-            scaled = p * n
+        for i, alternate_chance in enumerate(probabilities):
+            scaled = alternate_chance * n
             scaled_probabilities.append(scaled)
             if scaled == 1:
-                self.table[i][2] = zero
+                table[i][2] = zero
             elif scaled < 1:
                 small.append(i)
             else:
@@ -331,9 +346,9 @@ class Sampler:
 
             assert lo != hi
             assert scaled_probabilities[hi] > one
-            assert self.table[lo][1] is None
-            self.table[lo][1] = hi
-            self.table[lo][2] = one - scaled_probabilities[lo]
+            assert table[lo][1] is None
+            table[lo][1] = hi
+            table[lo][2] = one - scaled_probabilities[lo]
             scaled_probabilities[hi] = (
                 scaled_probabilities[hi] + scaled_probabilities[lo]
             ) - one
@@ -341,33 +356,39 @@ class Sampler:
             if scaled_probabilities[hi] < 1:
                 heapq.heappush(small, hi)
             elif scaled_probabilities[hi] == 1:
-                self.table[hi][2] = zero
+                table[hi][2] = zero
             else:
                 heapq.heappush(large, hi)
         while large:
-            self.table[large.pop()][2] = zero
+            table[large.pop()][2] = zero
         while small:
-            self.table[small.pop()][2] = zero
+            table[small.pop()][2] = zero
 
-        for entry in self.table:
-            assert entry[2] is not None
-            if entry[1] is None:
-                entry[1] = entry[0]
-            elif entry[1] < entry[0]:
-                entry[0], entry[1] = entry[1], entry[0]
-                entry[2] = one - entry[2]
+        self.table: "List[Tuple[int, int, float]]" = []
+        for base, alternate, alternate_chance in table:  # type: ignore
+            assert isinstance(base, int)
+            assert isinstance(alternate, int) or alternate is None
+            if alternate is None:
+                self.table.append((base, base, alternate_chance))
+            elif alternate < base:
+                self.table.append((alternate, base, one - alternate_chance))
+            else:
+                self.table.append((base, alternate, alternate_chance))
         self.table.sort()
 
-    def sample(self, data):
-        data.start_example(SAMPLE_IN_SAMPLER_LABLE)
-        i = integer_range(data, 0, len(self.table) - 1)
-        base, alternate, alternate_chance = self.table[i]
+    def sample(self, data: "ConjectureData") -> int:
+        data.start_example(SAMPLE_IN_SAMPLER_LABEL)
+        base, alternate, alternate_chance = choice(data, self.table)
         use_alternate = biased_coin(data, alternate_chance)
         data.stop_example()
         if use_alternate:
             return alternate
         else:
             return base
+
+
+INT_SIZES = (8, 16, 32, 64, 128)
+INT_SIZES_SAMPLER = Sampler((4.0, 8.0, 1.0, 1.0, 0.5))
 
 
 class many:
@@ -382,19 +403,25 @@ class many:
         add_stuff_to_result()
     """
 
-    def __init__(self, data, min_size, max_size, average_size):
+    def __init__(
+        self,
+        data: "ConjectureData",
+        min_size: int,
+        max_size: Union[int, float],
+        average_size: Union[int, float],
+    ) -> None:
         assert 0 <= min_size <= average_size <= max_size
         self.min_size = min_size
         self.max_size = max_size
         self.data = data
-        self.stopping_value = 1 - 1.0 / (1 + average_size)
+        self.p_continue = _calc_p_continue(average_size - min_size, max_size - min_size)
         self.count = 0
         self.rejections = 0
         self.drawn = False
         self.force_stop = False
         self.rejected = False
 
-    def more(self):
+    def more(self) -> bool:
         """Should I draw another element to add to the collection?"""
         if self.drawn:
             self.data.stop_example(discard=self.rejected)
@@ -415,7 +442,7 @@ class many:
             elif self.count >= self.max_size:
                 forced_result = False
             should_continue = biased_coin(
-                self.data, self.stopping_value, forced=forced_result
+                self.data, self.p_continue, forced=forced_result
             )
 
         if should_continue:
@@ -439,3 +466,52 @@ class many:
                 self.data.mark_invalid()
             else:
                 self.force_stop = True
+
+
+SMALLEST_POSITIVE_FLOAT: float = next_up(0.0) or sys.float_info.min
+
+
+@lru_cache()
+def _calc_p_continue(desired_avg: float, max_size: int) -> float:
+    """Return the p_continue which will generate the desired average size."""
+    assert desired_avg <= max_size, (desired_avg, max_size)
+    if desired_avg == max_size:
+        return 1.0
+    p_continue = 1 - 1.0 / (1 + desired_avg)
+    if p_continue == 0 or max_size == float("inf"):
+        assert 0 <= p_continue < 1, p_continue
+        return p_continue
+    assert 0 < p_continue < 1, p_continue
+    # For small max_size, the infinite-series p_continue is a poor approximation,
+    # and while we can't solve the polynomial a few rounds of iteration quickly
+    # gets us a good approximate solution in almost all cases (sometimes exact!).
+    while _p_continue_to_avg(p_continue, max_size) > desired_avg:
+        # This is impossible over the reals, but *can* happen with floats.
+        p_continue -= 0.0001
+        # If we've reached zero or gone negative, we want to break out of this loop,
+        # and do so even if we're on a system with the unsafe denormals-are-zero flag.
+        # We make that an explicit error in st.floats(), but here we'd prefer to
+        # just get somewhat worse precision on collection lengths.
+        if p_continue < SMALLEST_POSITIVE_FLOAT:
+            p_continue = SMALLEST_POSITIVE_FLOAT
+            break
+    # Let's binary-search our way to a better estimate!  We tried fancier options
+    # like gradient descent, but this is numerically stable and works better.
+    hi = 1.0
+    while desired_avg - _p_continue_to_avg(p_continue, max_size) > 0.01:
+        assert 0 < p_continue < hi, (p_continue, hi)
+        mid = (p_continue + hi) / 2
+        if _p_continue_to_avg(mid, max_size) <= desired_avg:
+            p_continue = mid
+        else:
+            hi = mid
+    assert 0 < p_continue < 1, p_continue
+    assert _p_continue_to_avg(p_continue, max_size) <= desired_avg
+    return p_continue
+
+
+def _p_continue_to_avg(p_continue: float, max_size: int) -> float:
+    """Return the average_size generated by this p_continue and max_size."""
+    if p_continue >= 1:
+        return max_size
+    return (1.0 / (1 - p_continue) - 1) * (1 - p_continue**max_size)

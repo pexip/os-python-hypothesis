@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import io
 import sys
@@ -21,6 +16,7 @@ import pytest
 
 from hypothesis import given, strategies as st
 from hypothesis.errors import FailedHealthCheck, HypothesisWarning
+
 from tests.common.utils import fails_with
 
 
@@ -55,10 +51,11 @@ class test_given_on_setUp_fails_health_check(unittest.TestCase):
 
 SUBTEST_SUITE = """
 import unittest
-from hypothesis import given, strategies as st
+from hypothesis import given, settings, strategies as st
 
 class MyTest(unittest.TestCase):
     @given(s=st.text())
+    @settings(deadline=None)
     def test_subtest(self, s):
         with self.subTest(text=s):
             self.assertIsInstance(s, str)
@@ -72,7 +69,7 @@ if __name__ == "__main__":
 def test_subTest_no_self(testdir, err):
     # https://github.com/HypothesisWorks/hypothesis/issues/2462
     # for some reason this issue happens only when running unittest from commandline
-    fname = testdir.makefile("tests.py", SUBTEST_SUITE)
+    fname = testdir.makepyfile(tests=SUBTEST_SUITE)
     result = testdir.run(sys.executable, *err, str(fname))
     expected = pytest.ExitCode.TESTS_FAILED if err else pytest.ExitCode.OK
     assert result.ret == expected, result.stderr.str()

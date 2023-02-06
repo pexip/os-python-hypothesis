@@ -17,16 +17,14 @@ SCRIPTS="$ROOT/tooling/scripts"
 # shellcheck source=tooling/scripts/common.sh
 source "$SCRIPTS/common.sh"
 
-if [ -n "${PIPELINE_WORKSPACE-}" ] ; then
-    # We're on Azure Pipelines and already set up a suitable Python
-    PYTHON=$(command -v python)
-elif [ -n "${TRAVIS-}" ] ; then
-    # We're on Travis and already set up a suitable Python
+if [ -n "${GITHUB_ACTIONS-}" ] || [ -n "${CODESPACES-}" ] ; then
+    # We're on GitHub Actions or Codespaces and already set up a suitable Python
     PYTHON=$(command -v python)
 else
     # Otherwise, we install it from scratch
-    "$SCRIPTS/ensure-python.sh" 3.8.5
-    PYTHON=$(pythonloc 3.8.5)/bin/python
+    # NOTE: tooling keeps this version in sync with ci_version in tooling
+    "$SCRIPTS/ensure-python.sh" 3.10.9
+    PYTHON=$(pythonloc 3.10.9)/bin/python
 fi
 
 TOOL_REQUIREMENTS="$ROOT/requirements/tools.txt"
@@ -44,7 +42,6 @@ if ! "$TOOL_PYTHON" -m hypothesistooling check-installed ; then
   "$PYTHON" -m pip install --upgrade virtualenv
   "$PYTHON" -m virtualenv "$TOOL_VIRTUALENV"
   "$TOOL_PYTHON" -m pip install --no-warn-script-location -r requirements/tools.txt
-  "$TOOL_PYTHON" -m pip install --no-warn-script-location hypothesis-python/
 fi
 
 "$TOOL_PYTHON" -m hypothesistooling "$@"

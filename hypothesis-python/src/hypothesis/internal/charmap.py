@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import gzip
 import json
@@ -146,7 +141,7 @@ def as_general_categories(cats, name="cats"):
             out.update(x for x in cs if x.startswith(c))
         elif c not in cs:
             raise InvalidArgument(
-                "In %s=%r, %r is not a valid Unicode category." % (name, cats, c)
+                f"In {name}={cats!r}, {c!r} is not a valid Unicode category."
             )
     return tuple(c for c in cs if c in out)
 
@@ -318,7 +313,7 @@ def _query_for_key(key):
     return result
 
 
-limited_category_index_cache = {}  # type: cache_type
+limited_category_index_cache: cache_type = {}
 
 
 def query(
@@ -330,7 +325,7 @@ def query(
     exclude_characters="",
 ):
     """Return a tuple of intervals covering the codepoints for all characters
-    that meet the critera (min_codepoint <= codepoint(c) <= max_codepoint and
+    that meet the criteria (min_codepoint <= codepoint(c) <= max_codepoint and
     any(cat in include_categories for cat in categories(c)) and all(cat not in
     exclude_categories for cat in categories(c)) or (c in include_characters)
 

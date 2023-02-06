@@ -9,12 +9,20 @@ not just data but entire tests. You specify a number of primitive
 actions that can be combined together, and then Hypothesis will
 try to find sequences of those actions that result in a failure.
 
+.. tip::
+
+    Before reading this reference documentation, we recommend reading
+    `How not to Die Hard with Hypothesis <https://hypothesis.works/articles/how-not-to-die-hard-with-hypothesis/>`__
+    and `An Introduction to Rule-Based Stateful Testing <https://hypothesis.works/articles/rule-based-stateful-testing/>`__,
+    in that order. The implementation details will make more sense once you've seen
+    them used in practice, and know *why* each method or decorator is available.
+
 .. note::
 
   This style of testing is often called *model-based testing*, but in Hypothesis
   is called *stateful testing* (mostly for historical reasons - the original
   implementation of this idea in Hypothesis was more closely based on
-  `ScalaCheck's stateful testing <https://github.com/rickynils/scalacheck/blob/master/doc/UserGuide.md#stateful-testing>`_
+  `ScalaCheck's stateful testing <https://github.com/typelevel/scalacheck/blob/main/doc/UserGuide.md#stateful-testing>`_
   where the name is more apt).
   Both of these names are somewhat misleading: You don't really need any sort of
   formal model of your code to use this, and it can be just as useful for pure APIs
@@ -82,8 +90,8 @@ in their behaviour.
 
   import shutil
   import tempfile
-
   from collections import defaultdict
+
   import hypothesis.strategies as st
   from hypothesis.database import DirectoryBasedExampleDatabase
   from hypothesis.stateful import Bundle, RuleBasedStateMachine, rule
@@ -91,7 +99,7 @@ in their behaviour.
 
   class DatabaseComparison(RuleBasedStateMachine):
       def __init__(self):
-          super(DatabaseComparison, self).__init__()
+          super().__init__()
           self.tempd = tempfile.mkdtemp()
           self.database = DirectoryBasedExampleDatabase(self.tempd)
           self.model = defaultdict(set)
@@ -220,13 +228,12 @@ Initializes are typically useful to populate bundles:
 .. code:: python
 
     import hypothesis.strategies as st
-    from hypothesis.stateful import RuleBasedStateMachine, Bundle, rule, initialize
+    from hypothesis.stateful import Bundle, RuleBasedStateMachine, initialize, rule
 
     name_strategy = st.text(min_size=1).filter(lambda x: "/" not in x)
 
 
     class NumberModifier(RuleBasedStateMachine):
-
         folders = Bundle("folders")
         files = Bundle("files")
 
@@ -236,11 +243,11 @@ Initializes are typically useful to populate bundles:
 
         @rule(target=folders, name=name_strategy)
         def create_folder(self, parent, name):
-            return "%s/%s" % (parent, name)
+            return f"{parent}/{name}"
 
         @rule(target=files, name=name_strategy)
         def create_file(self, parent, name):
-            return "%s/%s" % (parent, name)
+            return f"{parent}/{name}"
 
 
 -------------
@@ -258,11 +265,10 @@ that returns True or False based on the RuleBasedStateMachine instance.
 
 .. code:: python
 
-    from hypothesis.stateful import RuleBasedStateMachine, rule, precondition
+    from hypothesis.stateful import RuleBasedStateMachine, precondition, rule
 
 
     class NumberModifier(RuleBasedStateMachine):
-
         num = 0
 
         @rule()
@@ -295,11 +301,10 @@ decorator that marks a function to be run after every step.
 
 .. code:: python
 
-    from hypothesis.stateful import RuleBasedStateMachine, rule, invariant
+    from hypothesis.stateful import RuleBasedStateMachine, invariant, rule
 
 
     class NumberModifier(RuleBasedStateMachine):
-
         num = 0
 
         @rule()

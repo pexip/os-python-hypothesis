@@ -1,19 +1,15 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from collections import defaultdict
+from typing import Dict
 
 import attr
 
@@ -35,10 +31,7 @@ from hypothesis.internal.conjecture.junkdrawer import (
     replace_all,
 )
 from hypothesis.internal.conjecture.shrinking import Float, Integer, Lexical, Ordering
-from hypothesis.internal.conjecture.shrinking.dfas import SHRINKING_DFAS
-
-if False:
-    from typing import Dict  # noqa
+from hypothesis.internal.conjecture.shrinking.learned_dfas import SHRINKING_DFAS
 
 
 def sort_key(buffer):
@@ -67,7 +60,7 @@ def sort_key(buffer):
     return (len(buffer), buffer)
 
 
-SHRINK_PASS_DEFINITIONS = {}  # type: Dict[str, ShrinkPassDefinition]
+SHRINK_PASS_DEFINITIONS: Dict[str, "ShrinkPassDefinition"] = {}
 
 
 @attr.s()
@@ -103,8 +96,8 @@ def defines_shrink_pass():
     def accept(run_step):
         ShrinkPassDefinition(run_with_chooser=run_step)
 
-        def run(self):  # pragma: no cover
-            raise AssertionError("Shrink passes should not be run directly")
+        def run(self):
+            raise NotImplementedError("Shrink passes should not be run directly")
 
         run.__name__ = run_step.__name__
         run.is_shrink_pass = True
@@ -193,8 +186,7 @@ class Shrinker:
         i = 0
         while i < len(self.shrink_target.buffer):
             if not self.incorporate_new_buffer(
-                self.shrink_target.buffer[: i] +
-                self.shrink_target.buffer[i + 1 :]
+                self.shrink_target.buffer[:i] + self.shrink_target.buffer[i + 1 :]
             ):
                 i += 1
 
@@ -223,7 +215,7 @@ class Shrinker:
     The two easiest ways to do this are:
 
     * Just run the N steps in random order. As long as a
-      reasonably large proportion of the operations suceed, this
+      reasonably large proportion of the operations succeed, this
       guarantees the expected stall length is quite short. The
       book keeping for making sure this does the right thing when
       it succeeds can be quite annoying.
@@ -249,7 +241,7 @@ class Shrinker:
 
     """
 
-    def derived_value(fn):
+    def derived_value(fn):  # noqa: B902
         """It's useful during shrinking to have access to derived values of
         the current shrink target.
 
@@ -286,8 +278,8 @@ class Shrinker:
 
         # We keep track of the current best example on the shrink_target
         # attribute.
-        self.shrink_target = None
-        self.update_shrink_target(initial)
+        self.shrink_target = initial
+        self.clear_change_tracking()
         self.shrinks = 0
 
         # We terminate shrinks that seem to have reached their logical
@@ -305,7 +297,7 @@ class Shrinker:
         # testing and learning purposes.
         self.extra_dfas = {}
 
-    @derived_value
+    @derived_value  # type: ignore
     def cached_calculations(self):
         return {}
 
@@ -341,7 +333,7 @@ class Shrinker:
             self.add_new_pass(name)
         return self.passes_by_name[name]
 
-    @derived_value
+    @derived_value  # type: ignore
     def match_cache(self):
         return {}
 
@@ -455,25 +447,15 @@ class Shrinker:
                     return "s" if n != 1 else ""
 
                 total_deleted = self.initial_size - len(self.shrink_target.buffer)
-
-                self.debug("---------------------")
-                self.debug("Shrink pass profiling")
-                self.debug("---------------------")
-                self.debug("")
                 calls = self.engine.call_count - self.initial_calls
+
                 self.debug(
-                    (
-                        "Shrinking made a total of %d call%s "
-                        "of which %d shrank. This deleted %d byte%s out of %d."
-                    )
-                    % (
-                        calls,
-                        s(calls),
-                        self.shrinks,
-                        total_deleted,
-                        s(total_deleted),
-                        self.initial_size,
-                    )
+                    "---------------------\n"
+                    "Shrink pass profiling\n"
+                    "---------------------\n\n"
+                    f"Shrinking made a total of {calls} call{s(calls)} of which "
+                    f"{self.shrinks} shrank. This deleted {total_deleted} bytes out "
+                    f"of {self.initial_size}."
                 )
                 for useful in [True, False]:
                     self.debug("")
@@ -491,10 +473,8 @@ class Shrinker:
                             continue
 
                         self.debug(
-                            (
-                                "  * %s made %d call%s of which "
-                                "%d shrank, deleting %d byte%s."
-                            )
+                            "  * %s made %d call%s of which "
+                            "%d shrank, deleting %d byte%s."
                             % (
                                 p.name,
                                 p.calls,
@@ -533,7 +513,7 @@ class Shrinker:
             + [dfa_replacement(n) for n in SHRINKING_DFAS]
         )
 
-    @derived_value
+    @derived_value  # type: ignore
     def shrink_pass_choice_trees(self):
         return defaultdict(ChoiceTree)
 
@@ -648,7 +628,7 @@ class Shrinker:
     def all_block_bounds(self):
         return self.shrink_target.blocks.all_bounds()
 
-    @derived_value
+    @derived_value  # type: ignore
     def examples_by_label(self):
         """An index of all examples grouped by their label, with
         the examples stored in their normal index order."""
@@ -658,7 +638,7 @@ class Shrinker:
             examples_by_label[ex.label].append(ex)
         return dict(examples_by_label)
 
-    @derived_value
+    @derived_value  # type: ignore
     def distinct_labels(self):
         return sorted(self.examples_by_label, key=str)
 
@@ -840,22 +820,17 @@ class Shrinker:
 
     def update_shrink_target(self, new_target):
         assert isinstance(new_target, ConjectureResult)
-        if self.shrink_target is not None:
-            self.shrinks += 1
-            # If we are just taking a long time to shrink we don't want to
-            # trigger this heuristic, so whenever we shrink successfully
-            # we give ourselves a bit of breathing room to make sure we
-            # would find a shrink that took that long to find the next time.
-            # The case where we're taking a long time but making steady
-            # progress is handled by `finish_shrinking_deadline` in engine.py
-            self.max_stall = max(
-                self.max_stall, (self.calls - self.calls_at_last_shrink) * 2
-            )
-            self.calls_at_last_shrink = self.calls
-        else:
-            self.__all_changed_blocks = set()
-            self.__last_checked_changed_at = new_target
-
+        self.shrinks += 1
+        # If we are just taking a long time to shrink we don't want to
+        # trigger this heuristic, so whenever we shrink successfully
+        # we give ourselves a bit of breathing room to make sure we
+        # would find a shrink that took that long to find the next time.
+        # The case where we're taking a long time but making steady
+        # progress is handled by `finish_shrinking_deadline` in engine.py
+        self.max_stall = max(
+            self.max_stall, (self.calls - self.calls_at_last_shrink) * 2
+        )
+        self.calls_at_last_shrink = self.calls
         self.shrink_target = new_target
         self.__derived_values = {}
 
@@ -1010,7 +985,7 @@ class Shrinker:
                 return False
         return True
 
-    @derived_value
+    @derived_value  # type: ignore
     def blocks_by_non_zero_suffix(self):
         """Returns a list of blocks grouped by their non-zero suffix,
         as a list of (suffix, indices) pairs, skipping all groupings
@@ -1025,7 +1000,7 @@ class Shrinker:
             )
         return duplicates
 
-    @derived_value
+    @derived_value  # type: ignore
     def duplicated_block_suffixes(self):
         return sorted(self.blocks_by_non_zero_suffix)
 
@@ -1084,12 +1059,12 @@ class Shrinker:
             lambda ex: (
                 ex.label == DRAW_FLOAT_LABEL
                 and len(ex.children) == 2
-                and ex.children[0].length == 8
+                and ex.children[1].length == 8
             ),
         )
 
-        u = ex.children[0].start
-        v = ex.children[0].end
+        u = ex.children[1].start
+        v = ex.children[1].end
         buf = self.shrink_target.buffer
         b = buf[u:v]
         f = lex_to_float(int_from_bytes(b))
@@ -1266,6 +1241,7 @@ class Shrinker:
             import hypothesis.strategies as st
             from hypothesis import given
 
+
             @given(st.text(), st.text())
             def test_not_equal(x, y):
                 assert x != y
@@ -1329,14 +1305,14 @@ class Shrinker:
                         attempt[u:v] = int_to_bytes(value - 1, v - u)
                 elif d == "X":
                     del attempt[u:v]
-                else:  # pragma: no cover
-                    raise AssertionError("Unrecognised command %r" % (d,))
+                else:
+                    raise NotImplementedError(f"Unrecognised command {d!r}")
         return self.incorporate_new_buffer(attempt)
 
 
 def shrink_pass_family(f):
     def accept(*args):
-        name = "%s(%s)" % (f.__name__, ", ".join(map(repr, args)))
+        name = "{}({})".format(f.__name__, ", ".join(map(repr, args)))
         if name not in SHRINK_PASS_DEFINITIONS:
 
             def run(self, chooser):

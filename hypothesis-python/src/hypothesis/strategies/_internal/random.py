@@ -1,21 +1,17 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import inspect
 import math
 from random import Random
+from typing import Dict
 
 import attr
 
@@ -23,7 +19,13 @@ from hypothesis.control import should_note
 from hypothesis.internal.conjecture import utils as cu
 from hypothesis.internal.reflection import define_function_signature
 from hypothesis.reporting import report
-from hypothesis.strategies._internal import core as st
+from hypothesis.strategies._internal.core import (
+    binary,
+    lists,
+    permutations,
+    sampled_from,
+)
+from hypothesis.strategies._internal.numbers import floats, integers
 from hypothesis.strategies._internal.strategies import SearchStrategy
 
 
@@ -54,19 +56,10 @@ class HypothesisRandom(Random):
             return
 
         args, kwargs = convert_kwargs(method, kwargs)
-
-        report(
-            "%r.%s(%s) -> %r"
-            % (
-                self,
-                method,
-                ", ".join(
-                    list(map(repr, args))
-                    + ["%s=%r" % (k, v) for k, v in kwargs.items()]
-                ),
-                result,
-            )
+        argstr = ", ".join(
+            list(map(repr, args)) + [f"{k}={v!r}" for k, v in kwargs.items()]
         )
+        report(f"{self!r}.{method}({argstr}) -> {result!r}")
 
     def _hypothesis_do_random(self, method, kwargs):
         raise NotImplementedError()
@@ -77,6 +70,7 @@ RANDOM_METHODS = [
     for name in [
         "_randbelow",
         "betavariate",
+        "binomialvariate",
         "choice",
         "choices",
         "expovariate",
@@ -102,22 +96,22 @@ RANDOM_METHODS = [
 
 
 # Fake shims to get a good signature
-def getrandbits(self, n: int) -> int:
+def getrandbits(self, n: int) -> int:  # type: ignore
     raise NotImplementedError()
 
 
-def random(self) -> float:
+def random(self) -> float:  # type: ignore
     raise NotImplementedError()
 
 
-def _randbelow(self, n: int) -> int:
+def _randbelow(self, n: int) -> int:  # type: ignore
     raise NotImplementedError()
 
 
 STUBS = {f.__name__: f for f in [getrandbits, random, _randbelow]}
 
 
-SIGNATURES = {}
+SIGNATURES: Dict[str, inspect.Signature] = {}
 
 
 def sig_of(name):
@@ -140,9 +134,9 @@ def define_copy_method(name):
         self._hypothesis_log_random(name, kwargs, result)
         return result
 
-    spec = inspect.getfullargspec(STUBS.get(name, target))
+    sig = inspect.signature(STUBS.get(name, target))
 
-    result = define_function_signature(target.__name__, target.__doc__, spec)(
+    result = define_function_signature(target.__name__, target.__doc__, sig)(
         implementation
     )
 
@@ -178,10 +172,10 @@ def state_for_seed(data, seed):
     return state
 
 
-UNIFORM = st.floats(0, 1)
+UNIFORM = floats(0, 1)
 
 
-def normalize_zero(f):
+def normalize_zero(f: float) -> float:
     if f == 0.0:
         return 0.0
     else:
@@ -189,10 +183,10 @@ def normalize_zero(f):
 
 
 class ArtificialRandom(HypothesisRandom):
-    VERSION = 10 ** 6
+    VERSION = 10**6
 
     def __init__(self, note_method_calls, data):
-        HypothesisRandom.__init__(self, note_method_calls=note_method_calls)
+        super().__init__(note_method_calls=note_method_calls)
         self.__data = data
         self.__state = RandomState()
 
@@ -245,16 +239,16 @@ class ArtificialRandom(HypothesisRandom):
         elif method == "uniform":
             a = normalize_zero(kwargs["a"])
             b = normalize_zero(kwargs["b"])
-            result = self.__data.draw(st.floats(a, b))
+            result = self.__data.draw(floats(a, b))
         elif method in ("weibullvariate", "gammavariate"):
-            result = self.__data.draw(st.floats(min_value=0.0, allow_infinity=False))
+            result = self.__data.draw(floats(min_value=0.0, allow_infinity=False))
         elif method in ("gauss", "normalvariate"):
             mu = kwargs["mu"]
             result = mu + self.__data.draw(
-                st.floats(allow_nan=False, allow_infinity=False)
+                floats(allow_nan=False, allow_infinity=False)
             )
         elif method == "vonmisesvariate":
-            result = self.__data.draw(st.floats(0, 2 * math.pi))
+            result = self.__data.draw(floats(0, 2 * math.pi))
         elif method == "randrange":
             if kwargs["stop"] is None:
                 stop = kwargs["start"]
@@ -265,9 +259,7 @@ class ArtificialRandom(HypothesisRandom):
 
             step = kwargs["step"]
             if start == stop:
-                raise ValueError(
-                    "empty range for randrange(%d, %d, %d)" % (start, stop, step)
-                )
+                raise ValueError(f"empty range for randrange({start}, {stop}, {step})")
 
             if step != 1:
                 endpoint = (stop - start) // step
@@ -280,14 +272,17 @@ class ArtificialRandom(HypothesisRandom):
                 result = cu.integer_range(self.__data, start, stop - 1)
         elif method == "randint":
             result = cu.integer_range(self.__data, kwargs["a"], kwargs["b"])
+        # New in Python 3.12, so not taken by our coverage job
+        elif method == "binomialvariate":  # pragma: no cover
+            result = cu.integer_range(self.__data, 0, kwargs["n"])
         elif method == "choice":
             seq = kwargs["seq"]
             result = cu.integer_range(self.__data, 0, len(seq) - 1)
         elif method == "choices":
             k = kwargs["k"]
             result = self.__data.draw(
-                st.lists(
-                    st.integers(0, len(kwargs["population"]) - 1),
+                lists(
+                    integers(0, len(kwargs["population"]) - 1),
                     min_size=k,
                     max_size=k,
                 )
@@ -298,12 +293,12 @@ class ArtificialRandom(HypothesisRandom):
 
             if k > len(seq) or k < 0:
                 raise ValueError(
-                    "Sample size %d not in expected range 0 <= k <= %d" % (k, len(seq))
+                    f"Sample size {k} not in expected range 0 <= k <= {len(seq)}"
                 )
 
             result = self.__data.draw(
-                st.lists(
-                    st.sampled_from(range(len(seq))),
+                lists(
+                    sampled_from(range(len(seq))),
                     min_size=k,
                     max_size=k,
                     unique=True,
@@ -317,19 +312,18 @@ class ArtificialRandom(HypothesisRandom):
             high = normalize_zero(kwargs["high"])
             mode = normalize_zero(kwargs["mode"])
             if mode is None:
-                result = self.__data.draw(st.floats(low, high))
+                result = self.__data.draw(floats(low, high))
             elif self.__data.draw_bits(1):
-                result = self.__data.draw(st.floats(mode, high))
+                result = self.__data.draw(floats(mode, high))
             else:
-                result = self.__data.draw(st.floats(low, mode))
+                result = self.__data.draw(floats(low, mode))
         elif method in ("paretovariate", "expovariate", "lognormvariate"):
-            result = self.__data.draw(st.floats(min_value=0.0))
+            result = self.__data.draw(floats(min_value=0.0))
         elif method == "shuffle":
-            result = self.__data.draw(st.permutations(range(len(kwargs["x"]))))
-        # This is tested for but only appears in 3.9 so doesn't appear in coverage.
-        elif method == "randbytes":  # pragma: no cover
+            result = self.__data.draw(permutations(range(len(kwargs["x"]))))
+        elif method == "randbytes":
             n = kwargs["n"]
-            result = self.__data.draw(st.binary(min_size=n, max_size=n))
+            result = self.__data.draw(binary(min_size=n, max_size=n))
         else:
             raise NotImplementedError(method)
 
@@ -401,7 +395,7 @@ def convert_kwargs(name, kwargs):
 
 class TrueRandom(HypothesisRandom):
     def __init__(self, seed, note_method_calls):
-        HypothesisRandom.__init__(self, note_method_calls)
+        super().__init__(note_method_calls)
         self.__seed = seed
         self.__random = Random(seed)
 
@@ -419,7 +413,7 @@ class TrueRandom(HypothesisRandom):
         return result
 
     def __repr__(self):
-        return "Random(%r)" % (self.__seed,)
+        return f"Random({self.__seed!r})"
 
     def seed(self, seed):
         self.__random.seed(seed)

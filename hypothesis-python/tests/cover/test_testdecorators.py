@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import functools
 import threading
@@ -33,6 +28,7 @@ from hypothesis.strategies import (
     sets,
     text,
 )
+
 from tests.common.utils import (
     assert_falsifying_output,
     capture_out,
@@ -42,6 +38,10 @@ from tests.common.utils import (
     raises,
 )
 
+# This particular test file is run under both pytest and nose, so it can't
+# rely on pytest-specific helpers like `pytest.raises` unless we define a
+# fallback in tests.common.utils.
+
 
 @given(integers(), integers())
 def test_int_addition_is_commutative(x, y):
@@ -49,14 +49,17 @@ def test_int_addition_is_commutative(x, y):
 
 
 @fails
-@given(text(), text())
+@given(text(min_size=1), text(min_size=1))
 def test_str_addition_is_commutative(x, y):
     assert x + y == y + x
 
 
 @fails
-@given(binary(), binary())
+@given(binary(min_size=1), binary(min_size=1))
 def test_bytes_addition_is_commutative(x, y):
+    # We enforce min_size=1 here to avoid a rare flakiness, where the
+    # test passes if x and/or y are b"" for every generated example.
+    # (the internal implementation makes this less rare for bytes)
     assert x + y == y + x
 
 
@@ -82,12 +85,10 @@ def test_still_minimizes_on_non_assertion_failures():
     @given(integers())
     def is_not_too_large(x):
         if x >= 10:
-            raise ValueError("No, %s is just too large. Sorry" % x)
+            raise ValueError(f"No, {x} is just too large. Sorry")
 
-    with raises(ValueError) as exinfo:
+    with raises(ValueError, match=" 10 "):
         is_not_too_large()
-
-    assert " 10 " in exinfo.value.args[0]
 
 
 @given(integers())
@@ -113,7 +114,7 @@ class TestCases:
         assert isinstance(self, TestCases)
 
     @given(x=integers())
-    def test_abs_non_negative_varargs_kwargs_only(*args, **kw):
+    def test_abs_non_negative_varargs_kwargs_only(*args, **kw):  # noqa: B902
         assert abs(kw["x"]) >= 0
         assert isinstance(args[0], TestCases)
 
@@ -144,18 +145,6 @@ def test_one_of_produces_different_values(x, y):
 @given(just(42))
 def test_is_the_answer(x):
     assert x == 42
-
-
-@fails
-@given(text(), text())
-def test_text_addition_is_not_commutative(x, y):
-    assert x + y == y + x
-
-
-@fails
-@given(binary(), binary())
-def test_binary_addition_is_not_commutative(x, y):
-    assert x + y == y + x
 
 
 @given(integers(1, 10))
@@ -265,6 +254,7 @@ def test_is_an_endpoint(x):
 def test_breaks_bounds():
     @fails
     @given(x=integers())
+    @settings(derandomize=True, max_examples=10_000)
     def test_is_bounded(t, x):
         assert x < t
 
@@ -289,19 +279,21 @@ def test_is_ascii(x):
 def test_is_not_ascii(x):
     try:
         x.encode("ascii")
-        assert False
+        raise AssertionError
     except UnicodeEncodeError:
         pass
 
 
 @fails
-@given(text())
+@given(text(min_size=2))
+@settings(max_examples=100, derandomize=True)
 def test_can_find_string_with_duplicates(s):
     assert len(set(s)) == len(s)
 
 
 @fails
-@given(text())
+@given(text(min_size=1))
+@settings(derandomize=True)
 def test_has_ascii(x):
     if not x:
         return
@@ -333,7 +325,7 @@ def test_can_run_without_database():
     @given(integers())
     @settings(database=None)
     def test_blah(x):
-        assert False
+        raise AssertionError
 
     with raises(AssertionError):
         test_blah()
@@ -413,15 +405,14 @@ def test_when_set_to_no_simplifies_runs_failing_example_twice():
         if x > 11:
             note("Lo")
             failing.append(x)
-            assert False
+            raise AssertionError
 
-    with raises(AssertionError):
-        with capture_out() as out:
-            foo()
+    with raises(AssertionError) as err:
+        foo()
     assert len(failing) == 2
     assert len(set(failing)) == 1
-    assert "Falsifying example" in out.getvalue()
-    assert "Lo" in out.getvalue()
+    assert "Falsifying example" in "\n".join(err.value.__notes__)
+    assert "Lo" in err.value.__notes__
 
 
 @given(integers().filter(lambda x: x % 4 == 0))
@@ -475,14 +466,17 @@ def test_prints_notes_once_on_failure():
         if sum(xs) <= 100:
             raise ValueError()
 
-    with capture_out() as out:
-        with reporting.with_reporter(reporting.default):
-            with raises(ValueError):
-                test()
-    lines = out.getvalue().strip().splitlines()
-    assert lines.count("Hi there") == 1
+    with raises(ValueError) as err:
+        test()
+    assert err.value.__notes__.count("Hi there") == 1
 
 
 @given(lists(integers(), max_size=0))
 def test_empty_lists(xs):
     assert xs == []
+
+
+def test_given_usable_inline_on_lambdas():
+    xs = []
+    given(booleans())(lambda x: xs.append(x))()
+    assert len(xs) == 2 and set(xs) == {False, True}

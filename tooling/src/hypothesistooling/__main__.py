@@ -1,37 +1,34 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import os
+import pathlib
 import re
-import shlex
 import subprocess
 import sys
-from datetime import datetime
 from glob import glob
 
+import requests
 from coverage.config import CoverageConfig
 
 import hypothesistooling as tools
+import hypothesistooling.projects.conjecturerust as cr
+import hypothesistooling.projects.hypothesispython as hp
+import hypothesistooling.projects.hypothesisruby as hr
 from hypothesistooling import installers as install, releasemanagement as rm
-from hypothesistooling.projects import conjecturerust as cr, hypothesispython as hp
 from hypothesistooling.scripts import pip_tool
 
 TASKS = {}
 BUILD_FILES = tuple(
     os.path.join(tools.ROOT, f)
-    for f in ["tooling", "requirements", ".travis.yml", "hypothesis-python/tox.ini"]
+    for f in ["tooling", "requirements", ".github", "hypothesis-python/tox.ini"]
 )
 
 
@@ -43,20 +40,15 @@ def task(if_changed=()):
         def wrapped(*args, **kwargs):
             if if_changed and tools.IS_PULL_REQUEST:
                 if not tools.has_changes(if_changed + BUILD_FILES):
-                    print(
-                        "Skipping task due to no changes in %s"
-                        % (", ".join(if_changed),)
-                    )
+                    changed = ", ".join(if_changed)
+                    print(f"Skipping task due to no changes in {changed}")
                     return
             fn(*args, **kwargs)
 
         wrapped.__name__ = fn.__name__
-
         name = fn.__name__.replace("_", "-")
-
         if name != "<lambda>":
             TASKS[name] = wrapped
-
         return wrapped
 
     return accept
@@ -68,23 +60,31 @@ def check_installed():
     don't fail to run if a previous install failed midway)."""
 
 
+def codespell(*files):
+    pip_tool(
+        "codespell",
+        "--check-hidden",
+        "--check-filenames",
+        "--ignore-words=./tooling/ignore-list.txt",
+        "--skip=__pycache__,.mypy_cache,.venv,.git,tlds-alpha-by-domain.txt",
+        *files,
+    )
+
+
 @task()
 def lint():
     pip_tool(
         "flake8",
-        *[f for f in tools.all_files() if f.endswith(".py")],
+        *(f for f in tools.all_files() if f.endswith(".py")),
         "--config",
         os.path.join(tools.ROOT, ".flake8"),
     )
-
-
-HEAD = tools.hash_for_name("HEAD")
-MASTER = tools.hash_for_name("origin/master")
+    codespell(*(f for f in tools.all_files() if not f.endswith("by-domain.txt")))
 
 
 def do_release(package):
     if not package.has_release():
-        print("No release for %s" % (package.__name__,))
+        print(f"No release for {package.__name__}")
         return
 
     os.chdir(package.BASE_DIR)
@@ -102,7 +102,7 @@ def do_release(package):
 
     tag_name = package.tag_name()
 
-    print("Creating tag %s" % (tag_name,))
+    print(f"Creating tag {tag_name}")
 
     tools.create_tag(tag_name)
     tools.push_tag(tag_name)
@@ -113,6 +113,9 @@ def do_release(package):
 
 @task()
 def deploy():
+    HEAD = tools.hash_for_name("HEAD")
+    MASTER = tools.hash_for_name("origin/master")
+
     print("Current head:  ", HEAD)
     print("Current master:", MASTER)
 
@@ -120,12 +123,10 @@ def deploy():
         print("Not deploying due to not being on master")
         sys.exit(0)
 
-    if not tools.has_travis_secrets():
+    if "TWINE_PASSWORD" not in os.environ:
         print("Running without access to secure variables, so no deployment")
         sys.exit(0)
 
-    print("Decrypting secrets")
-    tools.decrypt_secrets()
     tools.configure_git()
 
     for project in tools.all_projects():
@@ -134,26 +135,18 @@ def deploy():
     sys.exit(0)
 
 
-CURRENT_YEAR = datetime.utcnow().year
-
-
+# See https://www.linuxfoundation.org/blog/copyright-notices-in-open-source-software-projects/
 HEADER = """
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-%(year)s David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER""".strip() % {
-    "year": CURRENT_YEAR
-}
+""".strip()
 
 
 @task()
@@ -175,39 +168,39 @@ def format():
     files = tools.all_files() if format_all else changed
 
     doc_files_to_format = [f for f in sorted(files) if should_format_doc_file(f)]
-    pip_tool("blacken-docs", *doc_files_to_format)
-
     files_to_format = [f for f in sorted(files) if should_format_file(f)]
 
-    if not files_to_format:
+    if not (files_to_format or doc_files_to_format):
         return
 
     # .coveragerc lists several regex patterns to treat as nocover pragmas, and
     # we want to find (and delete) cases where # pragma: no cover is redundant.
+    def warn(msg):
+        raise Exception(msg)
+
     config = CoverageConfig()
-    config.from_file(os.path.join(hp.BASE_DIR, ".coveragerc"), our_file=True)
+    config.from_file(os.path.join(hp.BASE_DIR, ".coveragerc"), warn=warn, our_file=True)
     pattern = "|".join(l for l in config.exclude_list if "pragma" not in l)
-    unused_pragma_pattern = re.compile(f"({pattern}).*# pragma: no cover")
+    unused_pragma_pattern = re.compile(f"(({pattern}).*)  # pragma: no (branch|cover)")
+    last_header_line = HEADER.splitlines()[-1].rstrip()
 
     for f in files_to_format:
         lines = []
         with open(f, encoding="utf-8") as o:
             shebang = None
             first = True
-            header_done = False
+            in_header = True
             for l in o.readlines():
                 if first:
                     first = False
                     if l[:2] == "#!":
                         shebang = l
                         continue
-                if "END HEADER" in l and not header_done:
+                elif in_header and l.rstrip() == last_header_line:
+                    in_header = False
                     lines = []
-                    header_done = True
-                elif unused_pragma_pattern.search(l) is not None:
-                    lines.append(l.replace("# pragma: no cover", ""))
                 else:
-                    lines.append(l)
+                    lines.append(unused_pragma_pattern.sub(r"\1", l))
         source = "".join(lines).strip()
         with open(f, "w", encoding="utf-8") as o:
             if shebang is not None:
@@ -219,19 +212,8 @@ def format():
                 o.write(source)
             o.write("\n")
 
-    pip_tool(
-        "autoflake",
-        "--recursive",
-        "--in-place",
-        "--exclude=compat.py",
-        "--remove-all-unused-imports",
-        "--remove-duplicate-keys",
-        "--remove-unused-variables",
-        *files_to_format,
-    )
-    pip_tool("pyupgrade", "--keep-percent-format", "--py36-plus", *files_to_format)
-    pip_tool("isort", *files_to_format)
-    pip_tool("black", "--target-version=py36", *files_to_format)
+    codespell("--write-changes", *files_to_format, *doc_files_to_format)
+    pip_tool("shed", *files_to_format, *doc_files_to_format)
 
 
 VALID_STARTS = (HEADER.split()[0], "#!/usr/bin/env python")
@@ -248,7 +230,7 @@ def check_format():
         with open(f, encoding="utf-8") as i:
             start = i.read(n)
             if not any(start.startswith(s) for s in VALID_STARTS):
-                print("%s has incorrect start %r" % (f, start), file=sys.stderr)
+                print(f"{f} has incorrect start {start!r}", file=sys.stderr)
                 bad = True
     assert not bad
     check_not_changed()
@@ -261,7 +243,7 @@ def check_not_changed():
 @task()
 def compile_requirements(upgrade=False):
     if upgrade:
-        extra = ["--upgrade"]
+        extra = ["--upgrade", "--rebuild"]
     else:
         extra = []
 
@@ -269,77 +251,95 @@ def compile_requirements(upgrade=False):
         base, _ = os.path.splitext(f)
         pip_tool(
             "pip-compile",
+            "--allow-unsafe",  # future default, not actually unsafe
+            "--resolver=backtracking",  # new pip resolver, default in pip-compile 7+
             *extra,
             f,
             "hypothesis-python/setup.py",
             "--output-file",
             base + ".txt",
             cwd=tools.ROOT,
+            env={
+                "CUSTOM_COMPILE_COMMAND": "./build.sh upgrade-requirements",
+                **os.environ,
+            },
         )
+
+
+def update_python_versions():
+    install.ensure_python(PYTHONS[ci_version])
+    cmd = "~/.cache/hypothesis-build-runtimes/pyenv/bin/pyenv install --list"
+    result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE).stdout.decode()
+    # pyenv reports available versions in chronological order, so we keep the newest
+    # *unless* our current ends with a digit (is stable) and the candidate does not.
+    stable = re.compile(r".*3\.\d+.\d+$")
+    best = {}
+    for line in map(str.strip, result.splitlines()):
+        if m := re.match(r"(?:pypy)?3\.(?:[789]|\d\d)", line):
+            key = m.group()
+            if stable.match(line) or not stable.match(best.get(key, line)):
+                best[key] = line
+
+    if best == PYTHONS:
+        return
+
+    # Write the new mapping back to this file
+    thisfile = pathlib.Path(__file__)
+    before = thisfile.read_text()
+    after = re.sub(r"\nPYTHONS = \{[^{}]+\}", f"\nPYTHONS = {best}", before)
+    thisfile.write_text(after)
+    pip_tool("shed", str(thisfile))
+
+    # Automatically sync ci_version with the version in build.sh
+    build_sh = pathlib.Path(tools.ROOT) / "build.sh"
+    sh_before = build_sh.read_text()
+    sh_after = re.sub(r"3\.\d\d?\.\d\d?", best[ci_version], sh_before)
+    if sh_before != sh_after:
+        build_sh.unlink()  # so bash doesn't reload a modified file
+        build_sh.write_text(sh_after)
+        build_sh.chmod(0o755)
+
+
+def update_vendored_files():
+    vendor = pathlib.Path(hp.PYTHON_SRC) / "hypothesis" / "vendor"
+
+    # Turns out that as well as adding new gTLDs, IANA can *terminate* old ones
+    url = "http://data.iana.org/TLD/tlds-alpha-by-domain.txt"
+    fname = vendor / url.split("/")[-1]
+    new = requests.get(url).content
+    # If only the timestamp in the header comment has changed, skip the update.
+    if fname.read_bytes().splitlines()[1:] != new.splitlines()[1:]:
+        fname.write_bytes(new)
+
+    # Always require the latest version of the tzdata package
+    tz_url = "https://pypi.org/pypi/tzdata/json"
+    tzdata_version = requests.get(tz_url).json()["info"]["version"]
+    setup = pathlib.Path(hp.BASE_DIR, "setup.py")
+    new = re.sub(r"tzdata>=(.+?) ", f"tzdata>={tzdata_version} ", setup.read_text())
+    setup.write_text(new)
+
+
+def has_diff(file_or_directory):
+    diff = ["git", "diff", "--no-patch", "--exit-code", "--", file_or_directory]
+    return subprocess.call(diff) != 0
 
 
 @task()
 def upgrade_requirements():
+    update_vendored_files()
     compile_requirements(upgrade=True)
-
-
-def is_pyup_branch():
-    if os.environ.get("TRAVIS_EVENT_TYPE") == "pull_request" and os.environ.get(
-        "TRAVIS_PULL_REQUEST_BRANCH", ""
-    ).startswith("pyup-scheduled-update"):
-        return True
-    return (
-        os.environ.get("Build.SourceBranchName", "").startswith("pyup-scheduled-update")
-        and os.environ.get("System.PullRequest.IsFork") == "False"
-        and os.environ.get("Build.Reason") == "PullRequest"
-    )
-
-
-def push_pyup_requirements_commit():
-    """Because pyup updates each package individually, it can create a
-    requirements.txt with an incompatible set of versions.
-
-    Depending on the changes, pyup might also have introduced
-    whitespace errors.
-
-    If we've recompiled requirements.txt in Travis and made changes,
-    and this is a PR where pyup is running, push a consistent set of
-    versions as a new commit to the PR.
-    """
-    if is_pyup_branch():
-        print("Pushing new requirements, as this is a pyup pull request")
-
-        print("Decrypting secrets")
-        tools.decrypt_secrets()
-        tools.configure_git()
-
-        print("Creating commit")
-        tools.git("add", "--update", "requirements")
-        tools.git("commit", "-m", "Bump requirements for pyup pull request")
-
-        print("Pushing to GitHub")
-        subprocess.check_call(
-            [
-                "ssh-agent",
-                "sh",
-                "-c",
-                "ssh-add %s && " % (shlex.quote(tools.DEPLOY_KEY),)
-                + "git push ssh-origin HEAD:%s"
-                % (os.environ["TRAVIS_PULL_REQUEST_BRANCH"],),
-            ]
-        )
+    subprocess.call(["./build.sh", "format"], cwd=tools.ROOT)  # exits 1 if changed
+    if has_diff(hp.PYTHON_SRC) and not os.path.isfile(hp.RELEASE_FILE):
+        msg = hp.get_autoupdate_message(domainlist_changed=has_diff(hp.DOMAINS_LIST))
+        with open(hp.RELEASE_FILE, mode="w") as f:
+            f.write(f"RELEASE_TYPE: patch\n\n" + msg)
+    update_python_versions()
+    subprocess.call(["git", "add", "."], cwd=tools.ROOT)
 
 
 @task()
 def check_requirements():
-    if is_pyup_branch() and tools.last_committer() != tools.TOOLING_COMMITER_NAME:
-        # Recompile to fix broken formatting etc., but ensure there can't be a loop.
-        compile_requirements(upgrade=True)
-        if tools.has_uncommitted_changes("requirements"):
-            push_pyup_requirements_commit()
-            raise RuntimeError("Pushed new requirements; check next build.")
-    else:
-        compile_requirements(upgrade=False)
+    compile_requirements(upgrade=False)
 
 
 @task(if_changed=hp.HYPOTHESIS_PYTHON)
@@ -355,7 +355,7 @@ def documentation():
         )
 
 
-def run_tox(task, version):
+def run_tox(task, version, *args):
     python = install.python_executable(version)
 
     # Create a version of the name that tox will pick up for the correct
@@ -372,99 +372,108 @@ def run_tox(task, version):
     env["PATH"] = os.path.dirname(python) + ":" + env["PATH"]
     print(env["PATH"])
 
-    pip_tool("tox", "-e", task, env=env, cwd=hp.HYPOTHESIS_PYTHON)
+    pip_tool("tox", "-e", task, *args, env=env, cwd=hp.HYPOTHESIS_PYTHON)
 
 
-# Via https://github.com/pyenv/pyenv/tree/master/plugins/python-build/share/python-build
-PY36 = "3.6.12"
-PY37 = "3.7.9"
-PY38 = "3.8.6"
-PY39 = "3.9.0"
-PYPY36 = "pypy3.6-7.3.1"
-
-
-@task()
-def install_core():
-    install.python_executable(PY36)
-
-
-# ALIASES are the executable names for each Python version
-ALIASES = {PYPY36: "pypy3"}
-
-for n in [PY36, PY37, PY38, PY39]:
-    major, minor, patch = n.replace("-dev", ".").split(".")
-    ALIASES[n] = "python%s.%s" % (major, minor)
-
+# update_python_versions(), above, keeps the contents of this dict up to date.
+# When a version is added or removed, manually update the env lists in tox.ini and
+# workflows/main.yml, and the `Programming Language ::` specifiers in setup.py
+PYTHONS = {
+    "3.7": "3.7.16",
+    "3.8": "3.8.16",
+    "3.9": "3.9.16",
+    "3.10": "3.10.9",
+    "3.11": "3.11.1",
+    "3.12": "3.12-dev",
+    "pypy3.7": "pypy3.7-7.3.9",
+    "pypy3.8": "pypy3.8-7.3.11",
+    "pypy3.9": "pypy3.9-7.3.11",
+}
+ci_version = "3.10"  # Keep this in sync with GH Actions main.yml and .readthedocs.yml
 
 python_tests = task(
     if_changed=(
         hp.PYTHON_SRC,
         hp.PYTHON_TESTS,
+        os.path.join(tools.ROOT, "pytest.ini"),
         os.path.join(hp.HYPOTHESIS_PYTHON, "scripts"),
     )
 )
 
 
-@python_tests
-def check_py36():
-    run_tox("py36-full", PY36)
+# ALIASES are the executable names for each Python version
+ALIASES = {}
+for key, version in PYTHONS.items():
+    if key.startswith("pypy"):
+        ALIASES[version] = "pypy3"
+        name = key.replace(".", "")
+    else:
+        ALIASES[version] = f"python{key}"
+        name = f"py3{key[2:]}"
+    TASKS[f"check-{name}"] = python_tests(
+        lambda n=f"{name}-full", v=version, *args: run_tox(n, v, *args)
+    )
+    for subtask in ("brief", "full", "cover", "nocover", "niche", "custom"):
+        TASKS[f"check-{name}-{subtask}"] = python_tests(
+            lambda n=f"{name}-{subtask}", v=version, *args: run_tox(n, v, *args)
+        )
 
 
 @python_tests
-def check_py37():
-    run_tox("py37-full", PY37)
+def check_py310_pyjion(*args):
+    run_tox("py310-pyjion", PYTHONS["3.10"], *args)
 
 
-@python_tests
-def check_py38():
-    run_tox("py38-full", PY38)
+@task()
+def tox(*args):
+    if len(args) < 2:
+        print("Usage: ./build.sh tox TOX_ENV PY_VERSION [tox args]")
+        sys.exit(1)
+    run_tox(*args)
 
 
-@python_tests
-def check_py39():
-    run_tox("py39-full", PY39)
+def standard_tox_task(name, *args, py=ci_version):
+    TASKS["check-" + name] = python_tests(
+        lambda: run_tox(name, PYTHONS.get(py, py), *args)
+    )
 
 
-@python_tests
-def check_pypy36():
-    run_tox("pypy3-full", PYPY36)
+standard_tox_task("py39-nose", py="3.9")
+standard_tox_task("py39-pytest46", py="3.9")
+standard_tox_task("py39-pytest54", py="3.9")
+standard_tox_task("pytest62")
 
+for n in [32, 40, 41]:
+    standard_tox_task(f"django{n}")
 
-def standard_tox_task(name):
-    TASKS["check-" + name] = python_tests(lambda: run_tox(name, PY36))
-
-
-standard_tox_task("nose")
-standard_tox_task("pytest43")
-
-for n in [22, 30, 31]:
-    standard_tox_task("django%d" % (n,))
-for n in [25, 100, 111]:
-    standard_tox_task("pandas%d" % (n,))
+standard_tox_task("py39-pandas10", py="3.9")
+for n in [11, 12, 13, 14, 15]:
+    standard_tox_task(f"pandas{n}")
 
 standard_tox_task("coverage")
 standard_tox_task("conjecture-coverage")
 
 
 @task()
-def check_quality():
-    run_tox("quality", PY36)
+def check_quality(*args):
+    run_tox("quality", PYTHONS[ci_version], *args)
 
 
-examples_task = task(
-    if_changed=(hp.PYTHON_SRC, os.path.join(hp.HYPOTHESIS_PYTHON, "examples"))
-)
-
-
-@examples_task
-def check_examples3():
-    run_tox("examples3", PY36)
+@task(if_changed=(hp.PYTHON_SRC, os.path.join(hp.HYPOTHESIS_PYTHON, "examples")))
+def check_examples3(*args):
+    run_tox("examples3", PYTHONS[ci_version], *args)
 
 
 @task()
-def check_whole_repo_tests():
+def check_whole_repo_tests(*args):
     install.ensure_shellcheck()
-    subprocess.check_call([sys.executable, "-m", "pytest", tools.REPO_TESTS])
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "--upgrade", hp.HYPOTHESIS_PYTHON]
+    )
+
+    if not args:
+        args = [tools.REPO_TESTS]
+    subprocess.check_call([sys.executable, "-m", "pytest", *args])
 
 
 @task()
@@ -474,9 +483,50 @@ def shell():
     IPython.start_ipython([])
 
 
+def ruby_task(fn):
+    return task(if_changed=(hr.HYPOTHESIS_RUBY,))(fn)
+
+
+@ruby_task
+def lint_ruby():
+    hr.rake_task("checkformat")
+
+
+@ruby_task
+def check_ruby_tests():
+    hr.rake_task("rspec")
+    hr.rake_task("minitest")
+
+
+@ruby_task
+def format_rust_in_ruby():
+    hr.cargo("fmt")
+
+
+@ruby_task
+def check_rust_in_ruby_format():
+    hr.cargo("fmt", "--", "--check")
+
+
+@ruby_task
+def lint_rust_in_ruby():
+    hr.cargo("clippy")
+
+
+@ruby_task
+def audit_rust_in_ruby():
+    hr.cargo("install", "cargo-audit")
+    hr.cargo("audit")
+
+
 @task()
 def python(*args):
     os.execv(sys.executable, (sys.executable,) + args)
+
+
+@task()
+def bundle(*args):
+    hr.bundle(*args)
 
 
 rust_task = task(if_changed=(cr.BASE_DIR,))
@@ -485,6 +535,34 @@ rust_task = task(if_changed=(cr.BASE_DIR,))
 @rust_task
 def check_rust_tests():
     cr.cargo("test")
+
+
+@rust_task
+def format_conjecture_rust_code():
+    cr.cargo("fmt")
+
+
+@rust_task
+def check_conjecture_rust_format():
+    cr.cargo("fmt", "--", "--check")
+
+
+@rust_task
+def lint_conjecture_rust():
+    cr.cargo("clippy")
+
+
+@rust_task
+def audit_conjecture_rust():
+    cr.cargo("install", "cargo-audit")
+    cr.cargo("audit")
+
+
+@task()
+def tasks():
+    """Print a list of all task names supported by the build system."""
+    for task_name in sorted(TASKS.keys()):
+        print("    " + task_name)
 
 
 if __name__ == "__main__":
@@ -505,8 +583,14 @@ if __name__ == "__main__":
     if task_to_run is None:
         print(
             "No task specified. Either pass the task to run as an "
-            "argument or as an environment variable TASK."
+            "argument or as an environment variable TASK. "
+            '(Use "./build.sh tasks" to list all supported task names.)'
         )
+        sys.exit(1)
+
+    if task_to_run not in TASKS:
+        print(f"\nUnknown task {task_to_run!r}.  Available tasks are:")
+        tasks()
         sys.exit(1)
 
     try:

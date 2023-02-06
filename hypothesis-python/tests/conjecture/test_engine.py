@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import re
 import time
@@ -36,6 +31,7 @@ from hypothesis.internal.conjecture.pareto import DominanceRelation, dominance
 from hypothesis.internal.conjecture.shrinker import Shrinker, block_program
 from hypothesis.internal.conjecture.utils import integer_range
 from hypothesis.internal.entropy import deterministic_PRNG
+
 from tests.common.strategies import SLOW, HardToShrink
 from tests.common.utils import no_shrink
 from tests.conjecture.common import (
@@ -112,8 +108,6 @@ def slow_shrinker():
 
 @pytest.mark.parametrize("n", [1, 5])
 def test_terminates_shrinks(n, monkeypatch):
-    from hypothesis.internal.conjecture import engine
-
     db = InMemoryExampleDatabase()
 
     def generate_new_examples(self):
@@ -122,7 +116,7 @@ def test_terminates_shrinks(n, monkeypatch):
     monkeypatch.setattr(
         ConjectureRunner, "generate_new_examples", generate_new_examples
     )
-    monkeypatch.setattr(engine, "MAX_SHRINKS", n)
+    monkeypatch.setattr(engine_module, "MAX_SHRINKS", n)
 
     runner = ConjectureRunner(
         slow_shrinker(),
@@ -156,17 +150,17 @@ def test_detects_flakiness():
 
 
 def recur(i, data):
-    try:
-        if i >= 1:
-            recur(i - 1, data)
-    except RecursionError:
-        data.mark_interesting()
+    if i >= 1:
+        recur(i - 1, data)
 
 
 def test_recursion_error_is_not_flaky():
     def tf(data):
         i = data.draw_bits(16)
-        recur(i, data)
+        try:
+            recur(i, data)
+        except RecursionError:
+            data.mark_interesting()
 
     runner = ConjectureRunner(tf)
     runner.run()
@@ -257,7 +251,7 @@ def test_stops_after_max_examples_when_generating_more_bugs(examples):
     def f(data):
         seen.append(data.draw_bits(32))
         # Rare, potentially multi-error conditions
-        if seen[-1] > 2 ** 31:
+        if seen[-1] > 2**31:
             bad[0] = True
             raise ValueError
         bad[1] = True
@@ -308,7 +302,7 @@ def test_phases_can_disable_shrinking():
         f, settings=settings(database=None, phases=(Phase.reuse, Phase.generate))
     )
     runner.run()
-    assert len(seen) == MIN_TEST_CALLS
+    assert len(seen) == 1
 
 
 def test_reuse_phase_runs_for_max_examples_if_generation_is_disabled():
@@ -410,7 +404,7 @@ def fails_health_check(label, **kwargs):
 
         with pytest.raises(FailedHealthCheck) as e:
             runner.run()
-        assert e.value.health_check == label
+        assert str(label) in str(e.value)
         assert not runner.interesting_examples
 
     return accept
@@ -426,14 +420,14 @@ def test_fails_health_check_for_all_invalid():
 def test_fails_health_check_for_large_base():
     @fails_health_check(HealthCheck.large_base_example)
     def _(data):
-        data.draw_bytes(10 ** 6)
+        data.draw_bytes(10**6)
 
 
 def test_fails_health_check_for_large_non_base():
     @fails_health_check(HealthCheck.data_too_large)
     def _(data):
         if data.draw_bits(8):
-            data.draw_bytes(10 ** 6)
+            data.draw_bytes(10**6)
 
 
 def test_fails_health_check_for_slow_draws():
@@ -461,7 +455,7 @@ def test_can_shrink_variable_draws(n_large):
 
 def test_run_nothing():
     def f(data):
-        assert False
+        raise AssertionError
 
     runner = ConjectureRunner(f, settings=settings(phases=()))
     runner.run()
@@ -813,7 +807,7 @@ def test_exit_because_shrink_phase_timeout(monkeypatch):
         return val[0]
 
     def f(data):
-        if data.draw_bits(64) > 2 ** 33:
+        if data.draw_bits(64) > 2**33:
             data.mark_interesting()
 
     monkeypatch.setattr(time, "perf_counter", fast_time)
@@ -1233,7 +1227,7 @@ def test_populates_the_pareto_front():
 
         runner.run()
 
-        assert len(runner.pareto_front) == 2 ** 4
+        assert len(runner.pareto_front) == 2**4
 
 
 def test_pareto_front_contains_smallest_valid_when_not_targeting():
@@ -1275,7 +1269,7 @@ def test_pareto_front_contains_different_interesting_reasons():
 
         runner.run()
 
-        assert len(runner.pareto_front) == 2 ** 4
+        assert len(runner.pareto_front) == 2**4
 
 
 def test_database_contains_only_pareto_front():
@@ -1455,7 +1449,7 @@ def test_runs_optimisation_even_if_not_generating():
 
         runner.run()
 
-        assert runner.best_observed_targets["n"] == (2 ** 16) - 1
+        assert runner.best_observed_targets["n"] == (2**16) - 1
 
 
 def test_runs_optimisation_once_when_generating():
@@ -1593,3 +1587,8 @@ def test_can_be_set_to_ignore_limits():
             runner.cached_test_function([c])
 
         assert runner.tree.is_exhausted
+
+
+def test_can_convert_non_weakref_types_to_event_strings():
+    runner = ConjectureRunner(lambda data: None)
+    runner.event_to_string(())

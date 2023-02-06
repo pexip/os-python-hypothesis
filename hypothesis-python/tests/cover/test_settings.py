@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import datetime
 import subprocess
@@ -30,9 +25,14 @@ from hypothesis._settings import (
     settings,
 )
 from hypothesis.database import ExampleDatabase
-from hypothesis.errors import InvalidArgument, InvalidState
+from hypothesis.errors import (
+    HypothesisDeprecationWarning,
+    InvalidArgument,
+    InvalidState,
+)
 from hypothesis.stateful import RuleBasedStateMachine, rule
 from hypothesis.utils.conventions import not_set
+
 from tests.common.utils import counts_calls, fails_with
 
 
@@ -187,11 +187,12 @@ def test_can_have_none_database():
 
 
 @pytest.mark.parametrize("db", [None, ExampleDatabase(":memory:")])
-def test_database_type_must_be_ExampleDatabase(db):
+@pytest.mark.parametrize("bad_db", [":memory:", ".hypothesis/examples"])
+def test_database_type_must_be_ExampleDatabase(db, bad_db):
     with local_settings(settings(database=db)):
         settings_property_db = settings.database
         with pytest.raises(InvalidArgument):
-            settings(database=".hypothesis/examples")
+            settings(database=bad_db)
         assert settings.database is settings_property_db
 
 
@@ -417,7 +418,7 @@ def test_assigning_to_settings_attribute_on_state_machine_raises_error():
 
         class StateMachine(RuleBasedStateMachine):
             @rule(x=st.none())
-            def a_rule(x):
+            def a_rule(self, x):
                 assert x is None
 
         StateMachine.settings = settings()
@@ -463,13 +464,21 @@ def test_invalid_parent():
 
 
 def test_show_changed():
-    s = settings(max_examples=999, database=None)
+    s = settings(max_examples=999, database=None, phases=tuple(Phase)[:-1])
     assert s.show_changed() == "database=None, max_examples=999"
 
 
 def test_note_deprecation_checks_date():
-    with pytest.warns(None) as rec:
-        note_deprecation("This is bad", since="RELEASEDAY")
+    with pytest.warns(HypothesisDeprecationWarning) as rec:
+        note_deprecation("This is bad", since="RELEASEDAY", has_codemod=False)
     assert len(rec) == 1
     with pytest.raises(AssertionError):
-        note_deprecation("This is way too old", since="1999-12-31")
+        note_deprecation("This is way too old", since="1999-12-31", has_codemod=False)
+
+
+def test_note_deprecation_checks_has_codemod():
+    with pytest.warns(
+        HypothesisDeprecationWarning,
+        match="The `hypothesis codemod` command-line tool",
+    ):
+        note_deprecation("This is bad", since="2021-01-01", has_codemod=True)

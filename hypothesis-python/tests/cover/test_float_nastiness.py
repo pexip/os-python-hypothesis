@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import math
 import sys
@@ -21,7 +16,6 @@ import pytest
 
 from hypothesis import assume, given, strategies as st
 from hypothesis.errors import InvalidArgument
-from hypothesis.internal.compat import WINDOWS
 from hypothesis.internal.floats import (
     float_of,
     float_to_int,
@@ -30,6 +24,7 @@ from hypothesis.internal.floats import (
     next_down,
     next_up,
 )
+
 from tests.common.debug import find_any, minimal
 
 try:
@@ -83,10 +78,6 @@ def test_half_bounded_generates_zero():
     find_any(st.floats(max_value=1.0), lambda x: x == 0.0)
 
 
-@pytest.mark.xfail(
-    WINDOWS,
-    reason=("Seems to be triggering a floating point bug on 2.7 + windows + x64"),
-)
 @given(st.floats(max_value=-0.0))
 def test_half_bounded_respects_sign_of_upper_bound(x):
     assert math.copysign(1, x) == -1
@@ -181,14 +172,14 @@ def test_float16_can_exclude_infinity(x):
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"min_value": 10 ** 5, "width": 16},
-        {"max_value": 10 ** 5, "width": 16},
-        {"min_value": 10 ** 40, "width": 32},
-        {"max_value": 10 ** 40, "width": 32},
-        {"min_value": 10 ** 400, "width": 64},
-        {"max_value": 10 ** 400, "width": 64},
-        {"min_value": 10 ** 400},
-        {"max_value": 10 ** 400},
+        {"min_value": 10**5, "width": 16},
+        {"max_value": 10**5, "width": 16},
+        {"min_value": 10**40, "width": 32},
+        {"max_value": 10**40, "width": 32},
+        {"min_value": 10**400, "width": 64},
+        {"max_value": 10**400, "width": 64},
+        {"min_value": 10**400},
+        {"max_value": 10**400},
     ],
 )
 def test_out_of_range(kwargs):
@@ -202,7 +193,7 @@ def test_disallowed_width():
 
 
 def test_no_single_floats_in_range():
-    low = 2.0 ** 25 + 1
+    low = 2.0**25 + 1
     high = low + 2
     st.floats(low, high).validate()  # Note: OK for 64bit floats
     with pytest.raises(InvalidArgument):

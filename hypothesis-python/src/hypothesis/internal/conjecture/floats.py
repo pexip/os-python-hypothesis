@@ -1,22 +1,21 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from array import array
+from typing import TYPE_CHECKING, Optional
 
 from hypothesis.internal.conjecture.utils import calc_label_from_name
 from hypothesis.internal.floats import float_to_int, int_to_float
+
+if TYPE_CHECKING:
+    from hypothesis.internal.conjecture.data import ConjectureData
 
 """
 This module implements support for arbitrary floating point numbers in
@@ -81,15 +80,13 @@ off the higher powers of 2 in the fraction first.
 
 MAX_EXPONENT = 0x7FF
 
-SPECIAL_EXPONENTS = (0, MAX_EXPONENT)
-
 BIAS = 1023
 MAX_POSITIVE_EXPONENT = MAX_EXPONENT - 1 - BIAS
 
 DRAW_FLOAT_LABEL = calc_label_from_name("drawing a float")
 
 
-def exponent_key(e):
+def exponent_key(e: int) -> float:
     if e == MAX_EXPONENT:
         return float("inf")
     unbiased = e - BIAS
@@ -108,21 +105,21 @@ for i, b in enumerate(ENCODING_TABLE):
 del i, b
 
 
-def decode_exponent(e):
+def decode_exponent(e: int) -> int:
     """Take draw_bits(11) and turn it into a suitable floating point exponent
     such that lexicographically simpler leads to simpler floats."""
     assert 0 <= e <= MAX_EXPONENT
     return ENCODING_TABLE[e]
 
 
-def encode_exponent(e):
+def encode_exponent(e: int) -> int:
     """Take a floating point exponent and turn it back into the equivalent
     result from conjecture."""
     assert 0 <= e <= MAX_EXPONENT
     return DECODING_TABLE[e]
 
 
-def reverse_byte(b):
+def reverse_byte(b: int) -> int:
     result = 0
     for _ in range(8):
         result <<= 1
@@ -138,7 +135,7 @@ def reverse_byte(b):
 REVERSE_BITS_TABLE = bytearray(map(reverse_byte, range(256)))
 
 
-def reverse64(v):
+def reverse64(v: int) -> int:
     """Reverse a 64-bit integer bitwise.
 
     We do this by breaking it up into 8 bytes. The 64-bit integer is then the
@@ -165,14 +162,14 @@ def reverse64(v):
 MANTISSA_MASK = (1 << 52) - 1
 
 
-def reverse_bits(x, n):
+def reverse_bits(x: int, n: int) -> int:
     assert x.bit_length() <= n <= 64
     x = reverse64(x)
     x >>= 64 - n
     return x
 
 
-def update_mantissa(unbiased_exponent, mantissa):
+def update_mantissa(unbiased_exponent: int, mantissa: int) -> int:
     if unbiased_exponent <= 0:
         mantissa = reverse_bits(mantissa, 52)
     elif unbiased_exponent <= 51:
@@ -183,7 +180,7 @@ def update_mantissa(unbiased_exponent, mantissa):
     return mantissa
 
 
-def lex_to_float(i):
+def lex_to_float(i: int) -> float:
     assert i.bit_length() <= 64
     has_fractional_part = i >> 63
     if has_fractional_part:
@@ -200,14 +197,14 @@ def lex_to_float(i):
         return float(integral_part)
 
 
-def float_to_lex(f):
+def float_to_lex(f: float) -> int:
     if is_simple(f):
         assert f >= 0
         return int(f)
     return base_float_to_lex(f)
 
 
-def base_float_to_lex(f):
+def base_float_to_lex(f: float) -> int:
     i = float_to_int(f)
     i &= (1 << 63) - 1
     exponent = i >> 52
@@ -219,7 +216,7 @@ def base_float_to_lex(f):
     return (1 << 63) | (exponent << 52) | mantissa
 
 
-def is_simple(f):
+def is_simple(f: float) -> int:
     try:
         i = int(f)
     except (ValueError, OverflowError):
@@ -229,18 +226,17 @@ def is_simple(f):
     return i.bit_length() <= 56
 
 
-def draw_float(data):
+def draw_float(data: "ConjectureData", forced_sign_bit: Optional[int] = None) -> float:
     try:
         data.start_example(DRAW_FLOAT_LABEL)
+        is_negative = data.draw_bits(1, forced=forced_sign_bit)
         f = lex_to_float(data.draw_bits(64))
-        if data.draw_bits(1):
-            f = -f
-        return f
+        return -f if is_negative else f
     finally:
         data.stop_example()
 
 
-def write_float(data, f):
-    data.draw_bits(64, forced=float_to_lex(abs(f)))
+def write_float(data: "ConjectureData", f: float) -> None:
     sign = float_to_int(f) >> 63
     data.draw_bits(1, forced=sign)
+    data.draw_bits(64, forced=float_to_lex(abs(f)))

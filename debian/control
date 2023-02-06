@@ -12,10 +12,10 @@ Build-Depends:
  python3-all,
  python3-attr,
  python3-coverage,
- python3-dateutil <!nodoc>,
+ python3-dateutil <!nocheck> <!nodoc>,
  python3-django <!nodoc>,
+ python3-exceptiongroup,
  python3-flaky <!nocheck>,
- python3-hypothesis <!nocheck>,
  python3-lark <!nodoc>,
  python3-mock <!nocheck>,
  python3-numpy <!nocheck>,
@@ -23,15 +23,16 @@ Build-Depends:
  python3-pexpect <!nocheck>,
  python3-pytest <!nocheck>,
  python3-setuptools,
- python3-sortedcontainers <!nodoc>,
+ python3-sortedcontainers,
  python3-sphinx <!nodoc>,
  python3-sphinx-rtd-theme <!nodoc>,
  python3-tz <!nocheck>,
 Rules-Requires-Root: no
-Standards-Version: 4.5.0
+Standards-Version: 4.6.2
 Homepage: https://github.com/HypothesisWorks/hypothesis
 Vcs-Git: https://salsa.debian.org/python-team/packages/python-hypothesis.git
 Vcs-Browser: https://salsa.debian.org/python-team/packages/python-hypothesis
+Testsuite: autopkgtest-pkg-pybuild
 
 Package: python3-hypothesis
 Architecture: all
@@ -43,6 +44,8 @@ Recommends:
  python3-click,
 Suggests:
  python-hypothesis-doc,
+Breaks:
+ python3-h2 (<< 4.1.0~)
 Description: advanced Quickcheck style testing library for Python 3
  Hypothesis is a library for testing your Python code against a much
  larger range of examples than you would ever want to write by
@@ -59,8 +62,7 @@ Description: advanced Quickcheck style testing library for Python 3
 
 Package: python-hypothesis-doc
 Architecture: all
-Built-Using:
- ${sphinxdoc:Built-Using},
+Multi-Arch: foreign
 Build-Profiles: <!nodoc>
 Section: doc
 Depends:

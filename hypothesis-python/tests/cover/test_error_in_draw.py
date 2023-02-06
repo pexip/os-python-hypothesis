@@ -1,22 +1,17 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import pytest
 
 from hypothesis import given, strategies as st
-from tests.common.utils import capture_out
+from hypothesis.errors import HypothesisWarning
 
 
 def test_error_is_in_finally():
@@ -27,8 +22,17 @@ def test_error_is_in_finally():
         finally:
             raise ValueError()
 
-    with capture_out() as o:
-        with pytest.raises(ValueError):
-            test()
+    with pytest.raises(ValueError) as err:
+        test()
 
-    assert "[0, 1, -1]" in o.getvalue()
+    assert "[0, 1, -1]" in "\n".join(err.value.__notes__)
+
+
+@given(st.data())
+def test_warns_on_bool_strategy(data):
+    with pytest.warns(
+        HypothesisWarning,
+        match=r"bool\(.+\) is always True, did you mean to draw a value\?",
+    ):
+        if st.booleans():  # 'forgot' to draw from the strategy
+            pass

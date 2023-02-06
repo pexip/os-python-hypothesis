@@ -1,25 +1,23 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
-
-from distutils.version import LooseVersion
 
 import pytest
-
-from hypothesis.extra.pytestplugin import PRINT_STATISTICS_OPTION
+from _hypothesis_pytestplugin import PRINT_STATISTICS_OPTION
 
 pytest_plugins = "pytester"
+
+
+def get_output(testdir, suite, *args):
+    script = testdir.makepyfile(suite)
+    result = testdir.runpytest(script, *args)
+    return "\n".join(result.stdout.lines)
 
 
 TESTSUITE = """
@@ -45,26 +43,38 @@ def test_iterations(x):
 
 
 def test_does_not_run_statistics_by_default(testdir):
-    script = testdir.makepyfile(TESTSUITE)
-    result = testdir.runpytest(script)
-    out = "\n".join(result.stdout.lines)
+    out = get_output(testdir, TESTSUITE)
     assert "Hypothesis Statistics" not in out
 
 
 def test_prints_statistics_given_option(testdir):
-    script = testdir.makepyfile(TESTSUITE)
-    result = testdir.runpytest(script, PRINT_STATISTICS_OPTION)
-    out = "\n".join(result.stdout.lines)
+    out = get_output(testdir, TESTSUITE, PRINT_STATISTICS_OPTION)
     assert "Hypothesis Statistics" in out
     assert "max_examples=100" in out
     assert "< 10% of examples satisfied assumptions" in out
 
 
-@pytest.mark.skipif(LooseVersion(pytest.__version__) < "3.5", reason="too old")
 def test_prints_statistics_given_option_under_xdist(testdir):
-    script = testdir.makepyfile(TESTSUITE)
-    result = testdir.runpytest(script, PRINT_STATISTICS_OPTION, "-n", "2")
-    out = "\n".join(result.stdout.lines)
+    out = get_output(testdir, TESTSUITE, PRINT_STATISTICS_OPTION, "-n", "2")
+    assert "Hypothesis Statistics" in out
+    assert "max_examples=100" in out
+    assert "< 10% of examples satisfied assumptions" in out
+
+
+def test_prints_statistics_given_option_with_junitxml(testdir):
+    out = get_output(testdir, TESTSUITE, PRINT_STATISTICS_OPTION, "--junit-xml=out.xml")
+    assert "Hypothesis Statistics" in out
+    assert "max_examples=100" in out
+    assert "< 10% of examples satisfied assumptions" in out
+
+
+@pytest.mark.skipif(
+    tuple(map(int, pytest.__version__.split(".")[:2])) < (5, 4), reason="too old"
+)
+def test_prints_statistics_given_option_under_xdist_with_junitxml(testdir):
+    out = get_output(
+        testdir, TESTSUITE, PRINT_STATISTICS_OPTION, "-n", "2", "--junit-xml=out.xml"
+    )
     assert "Hypothesis Statistics" in out
     assert "max_examples=100" in out
     assert "< 10% of examples satisfied assumptions" in out

@@ -1,21 +1,18 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
+
+import re
 
 import pytest
 
-from hypothesis import given, strategies as st
+from hypothesis import given, settings, strategies as st
 
 
 def test_includes_non_default_args_in_repr():
@@ -24,8 +21,8 @@ def test_includes_non_default_args_in_repr():
 
 
 def test_sampled_repr_leaves_range_as_range():
-    huge = 10 ** 100
-    assert repr(st.sampled_from(range(huge))) == "sampled_from(range(0, %s))" % (huge,)
+    huge = 10**100
+    assert repr(st.sampled_from(range(huge))) == f"sampled_from(range(0, {huge}))"
 
 
 def hi(there, stuff):
@@ -69,3 +66,102 @@ def test_errors_are_deferred_until_repr_is_calculated():
 def test_iterables_repr_is_useful(it):
     # fairly hard-coded but useful; also ensures _values are inexhaustible
     assert repr(it) == f"iter({it._values!r})"
+
+
+class Foo:
+    def __init__(self, x: int) -> None:
+        self.x = x
+
+
+class Bar(Foo):
+    pass
+
+
+def test_reprs_as_created():
+    @given(foo=st.builds(Foo), bar=st.from_type(Bar), baz=st.none().map(Foo))
+    @settings(print_blob=False, max_examples=10_000)
+    def inner(foo, bar, baz):
+        assert baz.x is None
+        assert foo.x <= 0 or bar.x >= 0
+
+    with pytest.raises(AssertionError) as err:
+        inner()
+    expected = """
+Falsifying example: inner(
+    foo=Foo(x=1),
+    bar=Bar(x=-1),
+    baz=Foo(None),
+)
+"""
+    assert "\n".join(err.value.__notes__).strip() == expected.strip()
+
+
+def test_reprs_as_created_interactive():
+    @given(st.data())
+    @settings(print_blob=False, max_examples=10_000)
+    def inner(data):
+        bar = data.draw(st.builds(Bar, st.just(10)))
+        assert not bar.x
+
+    with pytest.raises(AssertionError) as err:
+        inner()
+    expected = """
+Falsifying example: inner(
+    data=data(...),
+)
+Draw 1: Bar(10)
+"""
+    assert "\n".join(err.value.__notes__).strip() == expected.strip()
+
+
+CONSTANT_FOO = Foo(None)
+
+
+def some_foo(*_):
+    return CONSTANT_FOO
+
+
+def test_as_created_reprs_fallback_for_distinct_calls_same_obj():
+    # If we have *different* calls which return the *same* object, we skip our
+    # nice repr because it's unclear which one we should use.
+    @given(st.builds(some_foo), st.builds(some_foo, st.none()))
+    @settings(print_blob=False, max_examples=10_000)
+    def inner(a, b):
+        assert a is not b
+
+    with pytest.raises(AssertionError) as err:
+        inner()
+    expected_re = r"""
+Falsifying example: inner\(
+    a=<.*Foo object at 0x[0-9A-Fa-f]+>,
+    b=<.*Foo object at 0x[0-9A-Fa-f]+>,
+\)
+""".strip()
+    got = "\n".join(err.value.__notes__).strip()
+    assert re.fullmatch(expected_re, got), got
+
+
+def test_reprs_as_created_consistent_calls_despite_indentation():
+    aas = "a" * 60
+    strat = st.builds(some_foo, st.just(aas))
+
+    # If we have multiple calls which return the same object, we can print their
+    # nice repr even if varying indentation means that they'll come out different!
+    @given(strat, st.builds(Bar, strat))
+    @settings(print_blob=False, max_examples=10_000)
+    def inner(a, b):
+        assert a == b
+
+    with pytest.raises(AssertionError) as err:
+        inner()
+    expected = f"""
+Falsifying example: inner(
+    a=some_foo({aas!r}),
+    b=Bar(
+        some_foo(
+            {aas!r},
+        ),
+    ),
+)
+"""
+    assert "\n".join(err.value.__notes__).strip() == expected.strip()

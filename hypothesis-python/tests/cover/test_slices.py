@@ -1,21 +1,17 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import pytest
 
 from hypothesis import given, settings, strategies as st
+
 from tests.common.debug import assert_all_examples, find_any, minimal
 
 use_several_sizes = pytest.mark.parametrize("size", [1, 2, 5, 10, 100, 1000])
@@ -32,8 +28,8 @@ def test_stop_stays_within_bounds(size):
 @use_several_sizes
 def test_start_stay_within_bounds(size):
     assert_all_examples(
-        st.slices(size),
-        lambda x: x.start is None or (x.start >= -size and x.start <= size),
+        st.slices(size).filter(lambda x: x.start is not None),
+        lambda x: range(size)[x.start] or True,  # no IndexError raised
     )
 
 
@@ -63,30 +59,32 @@ def test_slices_will_shrink(size):
     sliced = minimal(st.slices(size))
     assert sliced.start == 0 or sliced.start is None
     assert sliced.stop == 0 or sliced.stop is None
-    assert sliced.step == 1
+    assert sliced.step is None
 
 
 @given(st.integers(1, 1000))
 @settings(deadline=None)
 def test_step_will_be_negative(size):
-    find_any(st.slices(size), lambda x: x.step < 0, settings(max_examples=10 ** 6))
+    find_any(
+        st.slices(size), lambda x: (x.step or 1) < 0, settings(max_examples=10**6)
+    )
 
 
 @given(st.integers(1, 1000))
 @settings(deadline=None)
 def test_step_will_be_positive(size):
-    find_any(st.slices(size), lambda x: x.step > 0)
+    find_any(st.slices(size), lambda x: (x.step or 1) > 0)
 
 
 @pytest.mark.parametrize("size", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 def test_stop_will_equal_size(size):
-    find_any(st.slices(size), lambda x: x.stop == size, settings(max_examples=10 ** 6))
+    find_any(st.slices(size), lambda x: x.stop == size, settings(max_examples=10**6))
 
 
 @pytest.mark.parametrize("size", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 def test_start_will_equal_size(size):
     find_any(
-        st.slices(size), lambda x: x.start == size - 1, settings(max_examples=10 ** 6)
+        st.slices(size), lambda x: x.start == size - 1, settings(max_examples=10**6)
     )
 
 

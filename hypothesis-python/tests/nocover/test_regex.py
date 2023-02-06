@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import re
 import string
@@ -26,9 +21,9 @@ def charset(draw):
     negated = draw(st.booleans())
     chars = draw(st.text(string.ascii_letters + string.digits, min_size=1))
     if negated:
-        return "[^%s]" % (chars,)
+        return f"[^{chars}]"
     else:
-        return "[%s]" % (chars,)
+        return f"[{chars}]"
 
 
 COMBINED_MATCHER = re.compile("[?+*]{2}")
@@ -41,7 +36,7 @@ def conservative_regex(draw):
             st.just("."),
             st.sampled_from([re.escape(c) for c in string.printable]),
             charset(),
-            CONSERVATIVE_REGEX.map(lambda s: "(%s)" % (s,)),
+            CONSERVATIVE_REGEX.map(lambda s: f"({s})"),
             CONSERVATIVE_REGEX.map(lambda s: s + "+"),
             CONSERVATIVE_REGEX.map(lambda s: s + "?"),
             CONSERVATIVE_REGEX.map(lambda s: s + "*"),
@@ -52,13 +47,14 @@ def conservative_regex(draw):
     assume(COMBINED_MATCHER.search(result) is None)
     control = sum(result.count(c) for c in "?+*")
     assume(control <= 3)
+    assume(I_WITH_DOT not in result)  # known to be weird
     return result
 
 
 CONSERVATIVE_REGEX = conservative_regex()
-FLAGS = st.sets(st.sampled_from([getattr(re, "A", 0), re.I, re.M, re.S])).map(
-    lambda flag_set: reduce(int.__or__, flag_set, 0)
-)
+FLAGS = st.sets(
+    st.sampled_from([re.ASCII, re.IGNORECASE, re.MULTILINE, re.DOTALL])
+).map(lambda flag_set: reduce(int.__or__, flag_set, 0))
 
 
 @given(st.data())
@@ -102,7 +98,7 @@ def test_case_insensitive_not_literal_never_constructs_multichar_match(data):
     for _ in range(5):
         s = data.draw(strategy)
         assert pattern.fullmatch(s) is not None
-        # And to be on the safe side, we implment this stronger property:
+        # And to be on the safe side, we implement this stronger property:
         assert set(s).isdisjoint(I_WITH_DOT.swapcase())
 
 

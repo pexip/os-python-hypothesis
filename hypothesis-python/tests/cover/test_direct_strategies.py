@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import collections
 import decimal
@@ -26,6 +21,7 @@ import pytest
 from hypothesis import given, settings, strategies as ds
 from hypothesis.errors import InvalidArgument
 from hypothesis.vendor.pretty import pretty
+
 from tests.common.debug import minimal
 
 # Use `pretty` instead of `repr` for building test names, so that set and dict
@@ -39,7 +35,7 @@ def fn_test(*fnkwargs):
         ("fn", "args"),
         fnkwargs,
         ids=[
-            "%s(%s)" % (fn.__name__, ", ".join(map(pretty, args)))
+            "{}({})".format(fn.__name__, ", ".join(map(pretty, args)))
             for fn, args in fnkwargs
         ],
     )
@@ -50,7 +46,7 @@ def fn_ktest(*fnkwargs):
     return pytest.mark.parametrize(
         ("fn", "kwargs"),
         fnkwargs,
-        ids=["%s(**%s)" % (fn.__name__, pretty(kwargs)) for fn, kwargs in fnkwargs],
+        ids=[f"{fn.__name__}(**{pretty(kwargs)})" for fn, kwargs in fnkwargs],
     )
 
 
@@ -103,6 +99,8 @@ def fn_ktest(*fnkwargs):
     (ds.floats, {"exclude_max": True}),  # because max_value=None
     (ds.floats, {"min_value": 1.8, "width": 32}),
     (ds.floats, {"max_value": 1.8, "width": 32}),
+    (ds.complex_numbers, {"min_magnitude": 1.8, "width": 64}),
+    (ds.complex_numbers, {"max_magnitude": 1.8, "width": 64}),
     (ds.fractions, {"min_value": 2, "max_value": 1}),
     (ds.fractions, {"min_value": math.nan}),
     (ds.fractions, {"max_value": math.nan}),
@@ -126,6 +124,12 @@ def fn_ktest(*fnkwargs):
     (ds.text, {"min_size": 10, "max_size": 9}),
     (ds.text, {"alphabet": [1]}),
     (ds.text, {"alphabet": ["abc"]}),
+    (ds.text, {"alphabet": ds.just("abc")}),
+    (ds.text, {"alphabet": ds.sampled_from(["abc", "def"])}),
+    (ds.text, {"alphabet": ds.just(123)}),
+    (ds.text, {"alphabet": ds.sampled_from([123, 456])}),
+    (ds.text, {"alphabet": ds.builds(lambda: "abc")}),
+    (ds.text, {"alphabet": ds.builds(lambda: 123)}),
     (ds.binary, {"min_size": 10, "max_size": 9}),
     (ds.floats, {"min_value": math.nan}),
     (ds.floats, {"min_value": "0"}),
@@ -138,6 +142,7 @@ def fn_ktest(*fnkwargs):
     (ds.floats, {"min_value": 0.0, "max_value": 1.0, "allow_infinity": True}),
     (ds.floats, {"min_value": math.inf, "allow_infinity": False}),
     (ds.floats, {"max_value": -math.inf, "allow_infinity": False}),
+    (ds.complex_numbers, {"min_magnitude": None}),
     (ds.complex_numbers, {"min_magnitude": math.nan}),
     (ds.complex_numbers, {"max_magnitude": math.nan}),
     (ds.complex_numbers, {"max_magnitude": complex(1, 2)}),
@@ -146,6 +151,12 @@ def fn_ktest(*fnkwargs):
     (ds.complex_numbers, {"min_magnitude": 3, "max_magnitude": 2}),
     (ds.complex_numbers, {"max_magnitude": 2, "allow_infinity": True}),
     (ds.complex_numbers, {"max_magnitude": 2, "allow_nan": True}),
+    (ds.complex_numbers, {"width": None}),
+    # Conceivable mistake when misunderstanding width for individual component widths:
+    (ds.complex_numbers, {"width": 16}),
+    # Unsupported as of now:
+    (ds.complex_numbers, {"width": 196}),
+    (ds.complex_numbers, {"width": 256}),
     (ds.fixed_dictionaries, {"mapping": "fish"}),
     (ds.fixed_dictionaries, {"mapping": {1: "fish"}}),
     (ds.fixed_dictionaries, {"mapping": {}, "optional": "fish"}),
@@ -183,6 +194,8 @@ def fn_ktest(*fnkwargs):
     (ds.ip_addresses, {"v": 6, "network": "127.0.0.0/8"}),
     (ds.ip_addresses, {"network": b"127.0.0.0/8"}),  # only unicode strings are valid
     (ds.ip_addresses, {"network": b"::/64"}),
+    (ds.randoms, {"use_true_random": "False"}),
+    (ds.randoms, {"note_method_calls": "True"}),
 )
 def test_validates_keyword_arguments(fn, kwargs):
     with pytest.raises(InvalidArgument):
@@ -241,6 +254,9 @@ def test_validates_keyword_arguments(fn, kwargs):
     (ds.complex_numbers, {"allow_nan": False, "allow_infinity": True}),
     (ds.complex_numbers, {"allow_nan": False, "allow_infinity": False}),
     (ds.complex_numbers, {"max_magnitude": math.inf, "allow_infinity": True}),
+    (ds.complex_numbers, {"width": 32}),
+    (ds.complex_numbers, {"width": 64}),
+    (ds.complex_numbers, {"width": 128}),
     (ds.sampled_from, {"elements": [1]}),
     (ds.sampled_from, {"elements": [1, 2, 3]}),
     (ds.fixed_dictionaries, {"mapping": {1: ds.integers()}}),
@@ -248,7 +264,9 @@ def test_validates_keyword_arguments(fn, kwargs):
     (ds.text, {"alphabet": "abc"}),
     (ds.text, {"alphabet": set("abc")}),
     (ds.text, {"alphabet": ""}),
+    (ds.text, {"alphabet": ds.just("a")}),
     (ds.text, {"alphabet": ds.sampled_from("abc")}),
+    (ds.text, {"alphabet": ds.builds(lambda: "a")}),
     (ds.characters, {"whitelist_categories": ["N"]}),
     (ds.characters, {"blacklist_categories": []}),
     (ds.ip_addresses, {}),
@@ -294,13 +312,13 @@ def test_build_class_with_target_kwarg():
 
 
 def test_builds_raises_with_no_target():
-    with pytest.raises(InvalidArgument):
+    with pytest.raises(TypeError):
         ds.builds().example()
 
 
 @pytest.mark.parametrize("non_callable", [1, "abc", ds.integers()])
 def test_builds_raises_if_non_callable_as_target_kwarg(non_callable):
-    with pytest.raises(InvalidArgument):
+    with pytest.raises(TypeError):
         ds.builds(target=non_callable).example()
 
 
@@ -359,15 +377,13 @@ def test_decimal_is_in_bounds(x):
 
 
 def test_float_can_find_max_value_inf():
-    assert minimal(ds.floats(max_value=math.inf), lambda x: math.isinf(x)) == float(
-        "inf"
-    )
-    assert minimal(ds.floats(min_value=0.0), lambda x: math.isinf(x)) == math.inf
+    assert minimal(ds.floats(max_value=math.inf), math.isinf) == float("inf")
+    assert minimal(ds.floats(min_value=0.0), math.isinf) == math.inf
 
 
 def test_float_can_find_min_value_inf():
     minimal(ds.floats(), lambda x: x < 0 and math.isinf(x))
-    minimal(ds.floats(min_value=-math.inf, max_value=0.0), lambda x: math.isinf(x))
+    minimal(ds.floats(min_value=-math.inf, max_value=0.0), math.isinf)
 
 
 def test_can_find_none_list():
@@ -480,7 +496,7 @@ def test_chained_filter(x):
 
 def test_chained_filter_tracks_all_conditions():
     s = ds.integers().filter(bool).filter(lambda x: x % 3)
-    assert len(s.flat_conditions) == 2
+    assert len(s.wrapped_strategy.flat_conditions) == 2
 
 
 @pytest.mark.parametrize("version", [4, 6])

@@ -1,3 +1,49 @@
+# Hypothesis for Ruby 0.7.1 (2021-03-27)
+
+This patch fixes some internal typos.  There is no user-visible change.
+
+# Hypothesis for Ruby 0.7.0 (2021-03-12)
+
+Moves rake from being a a runtime dependency to being a development dependency. Rake is used to run tests but is not required for consumers of hypothesis-ruby.
+
+# Hypothesis for Ruby 0.6.1 (2021-02-01)
+
+This patch contains minor performance improvements for `HypothesisCoreIntegers` class instantiation.
+
+# Hypothesis for Ruby 0.6.0 (2021-01-27)
+
+Adds support for skipping shrinking. While shrinking is extremely helpful and important in general, it has the potential to be quite time consuming. It can be useful to observe a raw failure before choosing to allow the engine to try to shrink. [hypothesis-python](https://hypothesis.readthedocs.io/en/latest/settings.html#phases) already provides the ability to skip shrinking, so there is precedent for this being useful. While `hypothesis-ruby` does not have the concept of other "Phases" yet, we can still start off the API by using this concept.
+
+Usage:
+
+```
+hypothesis(phases: Phase.excluding(:shrink)) do
+  # Failures here will be displayed directly and shrinking will be avoided
+end
+```
+
+# Hypothesis for Ruby 0.5.0 (2021-01-25)
+
+Adds support for skipping shrinking. While shrinking is extremely helpful and important in general, it has the potential to be quite time consuming. It can be useful to observe a raw failure before choosing to allow the engine to try to shrink. [hypothesis-python](https://hypothesis.readthedocs.io/en/latest/settings.html#phases) already provides the ability to skip shrinking, so there is precedent for this being useful. While `hypothesis-ruby` does not have the concept of other "Phases" yet, we can still start off the API by using this concept.
+
+Usage:
+
+```
+hypothesis(phases: Phase.excluding(:shrink)) do
+  # Failures here will be displayed directly and shrinking will be avoided
+end
+```
+
+# Hypothesis for Ruby 0.4.0 (2021-01-12)
+
+This removes hypothesis-ruby's dependence on RSpec. Now, it can be used with any Ruby test runner.
+
+# Hypothesis for Ruby 0.3.0 (2021-01-08)
+
+This release converts Hypothesis for Ruby to use [RuTie](https://github.com/danielpclark/rutie)
+instead of the deprecated [Helix](https://github.com/tildeio/helix), restoring compatibility
+with recent versions of Rust.  Thanks to Alex Weisberger for taking this on!
+
 # Hypothesis for Ruby 0.2.0 (2018-10-24)
 
 This release adds an example database to Hypothesis for Ruby. This means that when a test fails,
@@ -6,7 +52,7 @@ manually pass a seed.
 
 # Hypothesis for Ruby 0.1.2 (2018-09-24)
 
-This release makes the code useable via a direct require.
+This release makes the code usable via a direct require.
 I.e. no need for rubygems or any special LOAD_PATH.
 
 For example, if the base directory were in /opt, you'd just say:
