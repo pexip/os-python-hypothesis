@@ -1,34 +1,36 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import sys
 import unittest
 from functools import partial
 from inspect import Parameter, signature
-from typing import Optional, Type, Union
+from typing import TYPE_CHECKING, Optional, Type, Union
 
 from django import forms as df, test as dt
+from django.contrib.staticfiles import testing as dst
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, models as dm
 
-from hypothesis import reject
-from hypothesis._settings import note_deprecation
+from hypothesis import reject, strategies as st
 from hypothesis.errors import InvalidArgument
 from hypothesis.extra.django._fields import from_field
-from hypothesis.strategies._internal import core as st
-from hypothesis.utils.conventions import InferType, infer
+from hypothesis.internal.reflection import define_function_signature
+from hypothesis.strategies._internal.utils import defines_strategy
+
+if sys.version_info >= (3, 10):
+    from types import EllipsisType as EllipsisType
+elif TYPE_CHECKING:
+    from builtins import ellipsis as EllipsisType
+else:
+    EllipsisType = type(Ellipsis)
 
 
 class HypothesisTestCase:
@@ -54,9 +56,17 @@ class TransactionTestCase(HypothesisTestCase, dt.TransactionTestCase):
     pass
 
 
-@st.defines_strategy()
+class LiveServerTestCase(HypothesisTestCase, dt.LiveServerTestCase):
+    pass
+
+
+class StaticLiveServerTestCase(HypothesisTestCase, dst.StaticLiveServerTestCase):
+    pass
+
+
+@defines_strategy()
 def from_model(
-    *model: Type[dm.Model], **field_strategies: Union[st.SearchStrategy, InferType]
+    *model: Type[dm.Model], **field_strategies: Union[st.SearchStrategy, EllipsisType]
 ) -> st.SearchStrategy:
     """Return a strategy for examples of ``model``.
 
@@ -80,7 +90,7 @@ def from_model(
         shop_strategy = from_model(Shop, company=from_model(Company))
 
     Like for :func:`~hypothesis.strategies.builds`, you can pass
-    :obj:`~hypothesis.infer` as a keyword argument to infer a strategy for
+    ``...`` (:obj:`python:Ellipsis`) as a keyword argument to infer a strategy for
     a field which has a default value instead of using the default.
     """
     if len(model) == 1:
@@ -88,22 +98,14 @@ def from_model(
     elif len(model) > 1:
         raise TypeError("Too many positional arguments")
     else:
-        try:
-            m_type = field_strategies.pop("model")  # type: ignore
-        except KeyError:
-            raise TypeError("Missing required positional argument `model`") from None
-        else:
-            note_deprecation(
-                "The `model` argument will be positional-only in a future version",
-                since="2020-03-18",
-            )
+        raise TypeError("Missing required positional argument `model`")
 
     if not issubclass(m_type, dm.Model):
-        raise InvalidArgument("model=%r must be a subtype of Model" % (model,))
+        raise InvalidArgument(f"model={model!r} must be a subtype of Model")
 
     fields_by_name = {f.name: f for f in m_type._meta.concrete_fields}
     for name, value in sorted(field_strategies.items()):
-        if value is infer:
+        if value is ...:
             field_strategies[name] = from_field(fields_by_name[name])
     for name, field in sorted(fields_by_name.items()):
         if (
@@ -128,13 +130,17 @@ def from_model(
     return _models_impl(st.builds(m_type.objects.get_or_create, **field_strategies))
 
 
-if sys.version_info[:2] >= (3, 8):  # pragma: no cover
+if sys.version_info[:2] >= (3, 8):
     # See notes above definition of st.builds() - this signature is compatible
     # and better matches the semantics of the function.  Great for documentation!
     sig = signature(from_model)
     params = list(sig.parameters.values())
     params[0] = params[0].replace(kind=Parameter.POSITIONAL_ONLY)
-    from_model.__signature__ = sig.replace(parameters=params)
+    from_model = define_function_signature(
+        name=from_model.__name__,
+        docstring=from_model.__doc__,
+        signature=sig.replace(parameters=params),
+    )(from_model)
 
 
 @st.composite
@@ -146,11 +152,11 @@ def _models_impl(draw, strat):
         reject()
 
 
-@st.defines_strategy()
+@defines_strategy()
 def from_form(
     form: Type[df.Form],
     form_kwargs: Optional[dict] = None,
-    **field_strategies: Union[st.SearchStrategy, InferType],
+    **field_strategies: Union[st.SearchStrategy, EllipsisType],
 ) -> st.SearchStrategy[df.Form]:
     """Return a strategy for examples of ``form``.
 
@@ -171,7 +177,7 @@ def from_form(
         shop_strategy = from_form(Shop, form_kwargs={"company_id": 5})
 
     Like for :func:`~hypothesis.strategies.builds`, you can pass
-    :obj:`~hypothesis.infer` as a keyword argument to infer a strategy for
+    ``...`` (:obj:`python:Ellipsis`) as a keyword argument to infer a strategy for
     a field which has a default value instead of using the default.
     """
     # currently unsupported:
@@ -181,7 +187,7 @@ def from_form(
     # ImageField
     form_kwargs = form_kwargs or {}
     if not issubclass(form, df.BaseForm):
-        raise InvalidArgument("form=%r must be a subtype of Form" % (form,))
+        raise InvalidArgument(f"form={form!r} must be a subtype of Form")
 
     # Forms are a little bit different from models. Model classes have
     # all their fields defined, whereas forms may have different fields
@@ -203,11 +209,11 @@ def from_form(
             # decomposing the individual sub-fields into the names that
             # the form validation process expects
             for i, _field in enumerate(field.fields):
-                fields_by_name["%s_%d" % (name, i)] = _field
+                fields_by_name[f"{name}_{i}"] = _field
         else:
             fields_by_name[name] = field
     for name, value in sorted(field_strategies.items()):
-        if value is infer:
+        if value is ...:
             field_strategies[name] = from_field(fields_by_name[name])
 
     for name, field in sorted(fields_by_name.items()):

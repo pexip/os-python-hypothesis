@@ -1,23 +1,19 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import pytest
 
-from hypothesis import assume, given, infer, reject, settings
+from hypothesis import assume, given, reject, settings
 from hypothesis.errors import InvalidArgument, Unsatisfiable
-from hypothesis.strategies import booleans, integers
+from hypothesis.strategies import booleans, integers, nothing
+
 from tests.common.utils import fails_with
 
 
@@ -38,8 +34,29 @@ def test_does_not_raise_unsatisfiable_if_some_false_in_finite_set():
     test_assume_x()
 
 
+def test_raises_unsatisfiable_if_passed_explicit_nothing():
+    @given(x=nothing())
+    def test_never_runs(x):
+        raise Exception("Can't ever execute this")
+
+    with pytest.raises(
+        Unsatisfiable,
+        match=r"Cannot generate examples from empty strategy: x=nothing\(\)",
+    ):
+        test_never_runs()
+
+
 def test_error_if_has_no_hints():
-    @given(a=infer)
+    @given(a=...)
+    def inner(a):
+        pass
+
+    with pytest.raises(InvalidArgument):
+        inner()
+
+
+def test_error_if_infer_all_and_has_no_hints():
+    @given(...)
     def inner(a):
         pass
 
@@ -48,8 +65,17 @@ def test_error_if_has_no_hints():
 
 
 def test_error_if_infer_is_posarg():
-    @given(infer)
-    def inner(ex):
+    @given(..., ...)
+    def inner(ex1: int, ex2: int):
+        pass
+
+    with pytest.raises(InvalidArgument):
+        inner()
+
+
+def test_error_if_infer_is_posarg_mixed_with_kwarg():
+    @given(..., ex2=...)
+    def inner(ex1: int, ex2: int):
         pass
 
     with pytest.raises(InvalidArgument):
@@ -73,3 +99,16 @@ def test_given_is_not_a_class_decorator():
     class test_given_is_not_a_class_decorator:
         def __init__(self, i):
             pass
+
+
+def test_specific_error_for_coroutine_functions():
+    @settings(database=None)
+    @given(booleans())
+    async def foo(x):
+        pass
+
+    with pytest.raises(
+        InvalidArgument,
+        match="Hypothesis doesn't know how to run async test functions",
+    ):
+        foo()

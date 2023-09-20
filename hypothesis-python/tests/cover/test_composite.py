@@ -1,22 +1,18 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import pytest
 
 from hypothesis import assume, given, strategies as st
-from hypothesis.errors import InvalidArgument
+from hypothesis.errors import HypothesisDeprecationWarning, InvalidArgument
+
 from tests.common.debug import minimal
 from tests.common.utils import flaky
 
@@ -79,6 +75,14 @@ def test_errors_given_kwargs_only():
             pass
 
 
+def test_warning_given_no_drawfn_call():
+    with pytest.warns(HypothesisDeprecationWarning):
+
+        @st.composite
+        def foo(_):
+            return "bar"
+
+
 def test_can_use_pure_args():
     @st.composite
     def stuff(*args):
@@ -126,6 +130,7 @@ def test_does_not_change_arguments(data, ls):
     # regression test for issue #1017 or other argument mutation
     @st.composite
     def strat(draw, arg):
+        draw(st.none())
         return arg
 
     ex = data.draw(strat(ls))
@@ -135,12 +140,12 @@ def test_does_not_change_arguments(data, ls):
 class ClsWithStrategyMethods:
     @classmethod
     @st.composite
-    def st_classmethod_then_composite(draw, cls):
+    def st_classmethod_then_composite(draw, cls):  # noqa: B902
         return draw(st.integers(0, 10))
 
     @st.composite
     @classmethod
-    def st_composite_then_classmethod(draw, cls):
+    def st_composite_then_classmethod(draw, cls):  # noqa: B902
         return draw(st.integers(0, 10))
 
     @staticmethod
@@ -154,7 +159,7 @@ class ClsWithStrategyMethods:
         return draw(st.integers(0, 10))
 
     @st.composite
-    def st_composite_method(draw, self):
+    def st_composite_method(draw, self):  # noqa: B902
         return draw(st.integers(0, 10))
 
 
@@ -175,3 +180,8 @@ def test_applying_composite_decorator_to_methods(data):
         x = data.draw(strategy)
         assert isinstance(x, int)
         assert 0 <= x <= 10
+
+
+def test_drawfn_cannot_be_instantiated():
+    with pytest.raises(TypeError):
+        st.DrawFn()

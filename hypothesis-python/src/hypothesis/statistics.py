@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import math
 import statistics
@@ -32,7 +27,7 @@ def describe_targets(best_targets):
     """Return a list of lines describing the results of `target`, if any."""
     # These lines are included in the general statistics description below,
     # but also printed immediately below failing examples to alleviate the
-    # "threshold problem" where shrinking can make severe bug look trival.
+    # "threshold problem" where shrinking can make severe bug look trivial.
     # See https://github.com/HypothesisWorks/hypothesis/issues/2180
     if not best_targets:
         return []
@@ -75,31 +70,24 @@ def describe_statistics(stats_dict):
         if upper == 0:
             ms = "< 1ms"
         elif lower == upper:
-            ms = "~ %dms" % (lower,)
+            ms = f"~ {lower}ms"
         else:
-            ms = "%d-%d ms" % (lower, upper)
+            ms = f"{lower}-{upper} ms"
         drawtime_percent = 100 * statistics.mean(
             t["drawtime"] / t["runtime"] if t["runtime"] > 0 else 0 for t in cases
         )
         lines.append(
-            "  - during {} phase ({:.2f} seconds):\n"
-            "    - Typical runtimes: {}, ~ {:.0f}% in data generation\n"
-            "    - {} passing examples, {} failing examples, {} invalid examples".format(
-                phase,
-                d["duration-seconds"],
-                ms,
-                drawtime_percent,
-                statuses["valid"],
-                statuses["interesting"],
-                statuses["invalid"] + statuses["overrun"],
-            )
+            f"  - during {phase} phase ({d['duration-seconds']:.2f} seconds):\n"
+            f"    - Typical runtimes: {ms}, ~ {drawtime_percent:.0f}% in data generation\n"
+            f"    - {statuses['valid']} passing examples, {statuses['interesting']} "
+            f"failing examples, {statuses['invalid'] + statuses['overrun']} invalid examples"
         )
         # If we've found new distinct failures in this phase, report them
         distinct_failures = d["distinct-failures"] - prev_failures
         if distinct_failures:
             plural = distinct_failures > 1
             lines.append(
-                "    - Found {}{} failing example{} in this phase".format(
+                "    - Found {}{} distinct error{} in this phase".format(
                     distinct_failures, " more" * bool(prev_failures), "s" * plural
                 )
             )
@@ -110,7 +98,7 @@ def describe_statistics(stats_dict):
             if events:
                 lines.append("    - Events:")
                 lines += [
-                    "      * {:.2f}%, {}".format(100 * v / len(cases), k)
+                    f"      * {100 * v / len(cases):.2f}%, {k}"
                     for k, v in sorted(events.items(), key=lambda x: (-x[1], x[0]))
                 ]
         # Some additional details on the shrinking phase

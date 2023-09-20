@@ -1,19 +1,14 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
-"""A module controlling settings for Hypothesis to use in falsification.
+"""The settings module configures runtime options for Hypothesis.
 
 Either an explicit settings object can be used or the default object on
 this module can be modified.
@@ -25,7 +20,7 @@ import inspect
 import os
 import warnings
 from enum import Enum, IntEnum, unique
-from typing import TYPE_CHECKING, Any, Collection, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Collection, Dict, List, Optional, TypeVar, Union
 
 import attr
 
@@ -44,7 +39,9 @@ if TYPE_CHECKING:
 
 __all__ = ["settings"]
 
-all_settings = {}  # type: Dict[str, Setting]
+all_settings: Dict[str, "Setting"] = {}
+
+T = TypeVar("T")
 
 
 class settingsProperty:
@@ -73,7 +70,7 @@ class settingsProperty:
         obj.__dict__[self.name] = value
 
     def __delete__(self, obj):
-        raise AttributeError("Cannot delete attribute %s" % (self.name,))
+        raise AttributeError(f"Cannot delete attribute {self.name}")
 
     @property
     def __doc__(self):
@@ -83,18 +80,18 @@ class settingsProperty:
             if self.show_default
             else "(dynamically calculated)"
         )
-        return "%s\n\ndefault value: ``%s``" % (description, default)
+        return f"{description}\n\ndefault value: ``{default}``"
 
 
 default_variable = DynamicVariable(None)
 
 
 class settingsMeta(type):
-    def __init__(self, *args, **kwargs):
+    def __init__(cls, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     @property
-    def default(self):
+    def default(cls):
         v = default_variable.value
         if v is not None:
             return v
@@ -103,10 +100,10 @@ class settingsMeta(type):
             assert default_variable.value is not None
         return default_variable.value
 
-    def _assign_default_internal(self, value):
+    def _assign_default_internal(cls, value):
         default_variable.value = value
 
-    def __setattr__(self, name, value):
+    def __setattr__(cls, name, value):
         if name == "default":
             raise AttributeError(
                 "Cannot assign to the property settings.default - "
@@ -114,32 +111,31 @@ class settingsMeta(type):
             )
         elif not (isinstance(value, settingsProperty) or name.startswith("_")):
             raise AttributeError(
-                "Cannot assign hypothesis.settings.%s=%r - the settings "
+                f"Cannot assign hypothesis.settings.{name}={value!r} - the settings "
                 "class is immutable.  You can change the global default "
                 "settings with settings.load_profile, or use @settings(...) "
-                "to decorate your test instead." % (name, value)
+                "to decorate your test instead."
             )
-        return type.__setattr__(self, name, value)
+        return super().__setattr__(name, value)
 
 
 class settings(metaclass=settingsMeta):
-    """A settings object controls a variety of parameters that are used in
-    falsification. These may control both the falsification strategy and the
-    details of the data that is generated.
+    """A settings object configures options including verbosity, runtime controls,
+    persistence, determinism, and more.
 
     Default values are picked up from the settings.default object and
     changes made there will be picked up in newly created settings.
     """
 
     __definitions_are_locked = False
-    _profiles = {}  # type: dict
+    _profiles: Dict[str, "settings"] = {}
     __module__ = "hypothesis"
 
     def __getattr__(self, name):
         if name in all_settings:
             return all_settings[name].default
         else:
-            raise AttributeError("settings has no attribute %s" % (name,))
+            raise AttributeError(f"settings has no attribute {name}")
 
     def __init__(
         self,
@@ -151,19 +147,19 @@ class settings(metaclass=settingsMeta):
         # The intended use is "like **kwargs, but more tractable for tooling".
         max_examples: int = not_set,  # type: ignore
         derandomize: bool = not_set,  # type: ignore
-        database: Union[None, "ExampleDatabase"] = not_set,  # type: ignore
+        database: Optional["ExampleDatabase"] = not_set,  # type: ignore
         verbosity: "Verbosity" = not_set,  # type: ignore
         phases: Collection["Phase"] = not_set,  # type: ignore
         stateful_step_count: int = not_set,  # type: ignore
         report_multiple_bugs: bool = not_set,  # type: ignore
         suppress_health_check: Collection["HealthCheck"] = not_set,  # type: ignore
-        deadline: Union[None, int, float, datetime.timedelta] = not_set,  # type: ignore
+        deadline: Union[int, float, datetime.timedelta, None] = not_set,  # type: ignore
         print_blob: bool = not_set,  # type: ignore
     ) -> None:
         if parent is not None:
             check_type(settings, parent, "parent")
         if derandomize not in (not_set, False):
-            if database not in (not_set, None):
+            if database not in (not_set, None):  # type: ignore
                 raise InvalidArgument(
                     "derandomize=True implies database=None, so passing "
                     f"database={database!r} too is invalid."
@@ -181,20 +177,26 @@ class settings(metaclass=settingsMeta):
                 else:
                     object.__setattr__(self, setting.name, setting.validator(value))
 
-    def __call__(self, test):
+    def __call__(self, test: T) -> T:
         """Make the settings object (self) an attribute of the test.
 
         The settings are later discovered by looking them up on the test itself.
         """
-        if not callable(test):
+        # Aliasing as Any avoids mypy errors (attr-defined) when accessing and
+        # setting custom attributes on the decorated function or class.
+        _test: Any = test
+
+        # Using the alias here avoids a mypy error (return-value) later when
+        # ``test`` is returned, because this check results in type refinement.
+        if not callable(_test):
             raise InvalidArgument(
                 "settings objects can be called as a decorator with @given, "
-                "but decorated test=%r is not callable." % (test,)
+                f"but decorated test={test!r} is not callable."
             )
         if inspect.isclass(test):
             from hypothesis.stateful import RuleBasedStateMachine
 
-            if issubclass(test, RuleBasedStateMachine):
+            if issubclass(_test, RuleBasedStateMachine):
                 attr_name = "_hypothesis_internal_settings_applied"
                 if getattr(test, attr_name, False):
                     raise InvalidArgument(
@@ -203,28 +205,25 @@ class settings(metaclass=settingsMeta):
                         "instead."
                     )
                 setattr(test, attr_name, True)
-                test.TestCase.settings = self
-                return test
+                _test.TestCase.settings = self
+                return test  # type: ignore
             else:
                 raise InvalidArgument(
                     "@settings(...) can only be used as a decorator on "
                     "functions, or on subclasses of RuleBasedStateMachine."
                 )
-        if hasattr(test, "_hypothesis_internal_settings_applied"):
+        if hasattr(_test, "_hypothesis_internal_settings_applied"):
             # Can't use _hypothesis_internal_use_settings as an indicator that
             # @settings was applied, because @given also assigns that attribute.
+            descr = get_pretty_function_description(test)
             raise InvalidArgument(
-                "%s has already been decorated with a settings object."
-                "\n    Previous:  %r\n    This:  %r"
-                % (
-                    get_pretty_function_description(test),
-                    test._hypothesis_internal_use_settings,
-                    self,
-                )
+                f"{descr} has already been decorated with a settings object.\n"
+                f"    Previous:  {_test._hypothesis_internal_use_settings!r}\n"
+                f"    This:  {self!r}"
             )
 
-        test._hypothesis_internal_use_settings = self
-        test._hypothesis_internal_settings_applied = True
+        _test._hypothesis_internal_use_settings = self
+        _test._hypothesis_internal_settings_applied = True
         return test
 
     @classmethod
@@ -279,15 +278,15 @@ class settings(metaclass=settingsMeta):
         raise AttributeError("settings objects are immutable")
 
     def __repr__(self):
-        bits = ("%s=%r" % (name, getattr(self, name)) for name in all_settings)
-        return "settings(%s)" % ", ".join(sorted(bits))
+        bits = sorted(f"{name}={getattr(self, name)!r}" for name in all_settings)
+        return "settings({})".format(", ".join(bits))
 
     def show_changed(self):
         bits = []
         for name, setting in all_settings.items():
             value = getattr(self, name)
             if value != setting.default:
-                bits.append("%s=%r" % (name, value))
+                bits.append(f"{name}={value!r}")
         return ", ".join(sorted(bits, key=len))
 
     @staticmethod
@@ -352,8 +351,8 @@ def _max_examples_validator(x):
     check_type(int, x, name="max_examples")
     if x < 1:
         raise InvalidArgument(
-            "max_examples=%r should be at least one. You can disable example "
-            "generation with the `phases` setting instead." % (x,)
+            f"max_examples={x!r} should be at least one. You can disable "
+            "example generation with the `phases` setting instead."
         )
     return x
 
@@ -364,7 +363,12 @@ settings._define_setting(
     validator=_max_examples_validator,
     description="""
 Once this many satisfying examples have been considered without finding any
-counter-example, falsification will terminate.
+counter-example, Hypothesis will stop looking.
+
+Note that we might call your test function fewer times if we find a bug early
+or can tell that we've exhausted the search space; or more if we discard some
+examples due to use of .filter(), assume(), or a few other things that can
+prevent the test case from completing successfully.
 
 The default value is chosen to suit a workflow where the test will be part of
 a suite that is regularly executed locally or on a CI server, balancing total
@@ -406,9 +410,9 @@ def _validate_database(db):
         return db
     raise InvalidArgument(
         "Arguments to the database setting must be None or an instance of "
-        "ExampleDatabase.  Try passing database=ExampleDatabase(%r), or "
+        f"ExampleDatabase.  Try passing database=ExampleDatabase({db!r}), or "
         "construct and use one of the specific subclasses in "
-        "hypothesis.database" % (db,)
+        "hypothesis.database"
     )
 
 
@@ -419,8 +423,10 @@ settings._define_setting(
     description="""
 An instance of :class:`~hypothesis.database.ExampleDatabase` that will be
 used to save examples to and load previous examples from. May be ``None``
-in which case no storage will be used, ``":memory:"`` for an in-memory
-database, or any path for a directory-based example database.
+in which case no storage will be used.
+
+See the :doc:`example database documentation <database>` for a list of built-in
+example database implementations, and how to define custom implementations.
 """,
     validator=_validate_database,
 )
@@ -428,14 +434,15 @@ database, or any path for a directory-based example database.
 
 @unique
 class Phase(IntEnum):
-    explicit = 0
-    reuse = 1
-    generate = 2
-    target = 3
-    shrink = 4
+    explicit = 0  #: controls whether explicit examples are run.
+    reuse = 1  #: controls whether previous examples will be reused.
+    generate = 2  #: controls whether new examples will be generated.
+    target = 3  #: controls whether examples will be mutated for targeting.
+    shrink = 4  #: controls whether examples will be shrunk.
+    explain = 5  #: controls whether Hypothesis attempts to explain test failures.
 
     def __repr__(self):
-        return "Phase.%s" % (self.name,)
+        return f"Phase.{self.name}"
 
 
 @unique
@@ -446,15 +453,21 @@ class HealthCheck(Enum):
     """
 
     def __repr__(self):
-        return "%s.%s" % (self.__class__.__name__, self.name)
+        return f"{self.__class__.__name__}.{self.name}"
 
     @classmethod
     def all(cls) -> List["HealthCheck"]:
         return list(HealthCheck)
 
     data_too_large = 1
-    """Check for when the typical size of the examples you are generating
-    exceeds the maximum allowed size too often."""
+    """Checks if too many examples are aborted for being too large.
+
+    This is measured by the number of random choices that Hypothesis makes
+    in order to generate something, not the size of the generated object.
+    For example, choosing a 100MB object from a predefined list would take
+    only a few bits, while generating 10KB of JSON from scratch might trigger
+    this health check.
+    """
 
     filter_too_much = 2
     """Check for when the test is filtering out too many examples, either
@@ -476,6 +489,24 @@ class HealthCheck(Enum):
     """Checks if :func:`@given <hypothesis.given>` has been applied to a
     method defined by :class:`python:unittest.TestCase` (i.e. not a test)."""
 
+    function_scoped_fixture = 9
+    """Checks if :func:`@given <hypothesis.given>` has been applied to a test
+    with a pytest function-scoped fixture. Function-scoped fixtures run once
+    for the whole function, not once per example, and this is usually not what
+    you want.
+
+    Because of this limitation, tests that need to set up or reset
+    state for every example need to do so manually within the test itself,
+    typically using an appropriate context manager.
+
+    Suppress this health check only in the rare case that you are using a
+    function-scoped fixture that does not need to be reset between individual
+    examples, but for some reason you cannot use a wider fixture scope
+    (e.g. session scope, module scope, class scope).
+
+    This check requires the :ref:`Hypothesis pytest plugin<pytest-plugin>`,
+    which is enabled by default when running Hypothesis inside pytest."""
+
 
 @unique
 class Verbosity(IntEnum):
@@ -485,7 +516,7 @@ class Verbosity(IntEnum):
     debug = 3
 
     def __repr__(self):
-        return "Verbosity.%s" % (self.name,)
+        return f"Verbosity.{self.name}"
 
 
 settings._define_setting(
@@ -500,13 +531,15 @@ def _validate_phases(phases):
     phases = tuple(phases)
     for a in phases:
         if not isinstance(a, Phase):
-            raise InvalidArgument("%r is not a valid phase" % (a,))
+            raise InvalidArgument(f"{a!r} is not a valid phase")
     return tuple(p for p in list(Phase) if p in phases)
 
 
 settings._define_setting(
     "phases",
-    default=tuple(Phase),
+    # We leave the `explain` phase disabled by default, for speed and brevity
+    # TODO: consider default-enabling this in CI?
+    default=_validate_phases(set(Phase) - {Phase.explain}),
     description=(
         "Control which phases should be run. "
         "See :ref:`the full documentation for more details <phases>`"
@@ -518,7 +551,7 @@ settings._define_setting(
 def _validate_stateful_step_count(x):
     check_type(int, x, name="stateful_step_count")
     if x < 1:
-        raise InvalidArgument("stateful_step_count=%r must be at least one." % (x,))
+        raise InvalidArgument(f"stateful_step_count={x!r} must be at least one.")
     return x
 
 
@@ -549,8 +582,8 @@ def validate_health_check_suppressions(suppressions):
     for s in suppressions:
         if not isinstance(s, HealthCheck):
             raise InvalidArgument(
-                "Non-HealthCheck value %r of type %s is invalid in suppress_health_check."
-                % (s, type(s).__name__)
+                f"Non-HealthCheck value {s!r} of type {type(s).__name__} "
+                "is invalid in suppress_health_check."
             )
     return suppressions
 
@@ -568,16 +601,16 @@ class duration(datetime.timedelta):
 
     def __repr__(self):
         ms = self.total_seconds() * 1000
-        return "timedelta(milliseconds=%r)" % (int(ms) if ms == int(ms) else ms,)
+        return f"timedelta(milliseconds={int(ms) if ms == int(ms) else ms!r})"
 
 
 def _validate_deadline(x):
     if x is None:
         return x
     invalid_deadline_error = InvalidArgument(
-        "deadline=%r (type %s) must be a timedelta object, an integer or float "
-        "number of milliseconds, or None to disable the per-test-case deadline."
-        % (x, type(x).__name__)
+        f"deadline={x!r} (type {type(x).__name__}) must be a timedelta object, "
+        "an integer or float number of milliseconds, or None to disable the "
+        "per-test-case deadline."
     )
     if isinstance(x, (int, float)):
         if isinstance(x, bool):
@@ -586,14 +619,14 @@ def _validate_deadline(x):
             x = duration(milliseconds=x)
         except OverflowError:
             raise InvalidArgument(
-                "deadline=%r is invalid, because it is too large to represent "
-                "as a timedelta. Use deadline=None to disable deadlines." % (x,)
+                f"deadline={x!r} is invalid, because it is too large to represent "
+                "as a timedelta. Use deadline=None to disable deadlines."
             ) from None
     if isinstance(x, datetime.timedelta):
         if x <= datetime.timedelta(0):
             raise InvalidArgument(
-                "deadline=%r is invalid, because it is impossible to meet a "
-                "deadline <= 0. Use deadline=None to disable deadlines." % (x,)
+                f"deadline={x!r} is invalid, because it is impossible to meet a "
+                "deadline <= 0. Use deadline=None to disable deadlines."
             )
         return duration(seconds=x.total_seconds())
     raise invalid_deadline_error
@@ -637,10 +670,15 @@ The default is ``True`` if the ``CI`` or ``TF_BUILD`` env vars are set, ``False`
 settings.lock_further_definitions()
 
 
-def note_deprecation(message: str, *, since: str) -> None:
+def note_deprecation(message: str, *, since: str, has_codemod: bool) -> None:
     if since != "RELEASEDAY":
         date = datetime.datetime.strptime(since, "%Y-%m-%d").date()
         assert datetime.date(2016, 1, 1) <= date
+    if has_codemod:
+        message += (
+            "\n    The `hypothesis codemod` command-line tool can automatically "
+            "refactor your code to fix this warning."
+        )
     warnings.warn(HypothesisDeprecationWarning(message), stacklevel=2)
 
 

@@ -1,25 +1,20 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import datetime as dt
 
 import pytest
 
 from hypothesis import given, settings
-from hypothesis.internal.compat import PYPY
 from hypothesis.strategies import dates, datetimes, timedeltas, times
+
 from tests.common.debug import find_any, minimal
 
 
@@ -29,7 +24,7 @@ def test_can_find_positive_delta():
 
 def test_can_find_negative_delta():
     assert minimal(
-        timedeltas(max_value=dt.timedelta(10 ** 6)), lambda x: x.days < 0
+        timedeltas(max_value=dt.timedelta(10**6)), lambda x: x.days < 0
     ) == dt.timedelta(-1)
 
 
@@ -92,7 +87,7 @@ def test_can_find_before_the_year_2000():
 
 @pytest.mark.parametrize("month", range(1, 13))
 def test_can_find_each_month(month):
-    find_any(dates(), lambda x: x.month == month, settings(max_examples=10 ** 6))
+    find_any(dates(), lambda x: x.month == month, settings(max_examples=10**6))
 
 
 def test_min_year_is_respected():
@@ -138,13 +133,10 @@ def test_naive_times_are_naive(dt):
     assert dt.tzinfo is None
 
 
-# pypy3.6 seems to canonicalise fold to 0 for non-ambiguous times?
-@pytest.mark.skipif(PYPY, reason="see comment")
 def test_can_generate_datetime_with_fold_1():
     find_any(datetimes(), lambda d: d.fold)
 
 
-@pytest.mark.skipif(PYPY, reason="see comment")
 def test_can_generate_time_with_fold_1():
     find_any(times(), lambda d: d.fold)
 

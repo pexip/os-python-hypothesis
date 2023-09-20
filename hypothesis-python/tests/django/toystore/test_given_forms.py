@@ -1,21 +1,17 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from hypothesis import given
 from hypothesis.extra.django import TestCase, from_form, register_field_strategy
 from hypothesis.strategies import booleans, sampled_from
+
 from tests.django.toystore.forms import (
     BasicFieldForm,
     BroadBooleanField,
@@ -33,6 +29,7 @@ from tests.django.toystore.forms import (
     SlugFieldForm,
     TemporalFieldForm,
     URLFieldForm,
+    UsernameForm,
     UUIDFieldForm,
     WithValidatorsForm,
 )
@@ -122,3 +119,11 @@ class TestGetsBasicForms(TestCase):
         self.assertTrue(1 <= x.data["_decimal_one_to_five"] <= 5)
         self.assertTrue(1 <= x.data["_float_one_to_five"] <= 5)
         self.assertTrue(5 <= len(x.data["_string_five_to_ten"]) <= 10)
+
+    @given(from_form(UsernameForm))
+    def test_username_form(self, username_form):
+        self.assertTrue(username_form.is_valid())
+
+    @given(from_form(UsernameForm))
+    def test_read_only_password_hash_field_form(self, password_form):
+        self.assertTrue(password_form.is_valid())

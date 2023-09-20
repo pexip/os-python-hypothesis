@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from random import Random
 
@@ -28,7 +23,7 @@ from hypothesis import (
 )
 from hypothesis.internal.conjecture.data import ConjectureData, Status, StopTest
 from hypothesis.internal.conjecture.engine import ConjectureRunner
-from hypothesis.strategies._internal.numbers import WideRangeIntStrategy
+from hypothesis.internal.conjecture.utils import INT_SIZES
 
 
 @st.composite
@@ -112,7 +107,24 @@ def test_always_reduces_integers_to_smallest_suitable_sizes(problem):
     #   have power of two sizes, so it may be up to a factor of two more than
     #   that.
     bits_needed = 1 + n.bit_length()
-    actual_bits_needed = min(s for s in WideRangeIntStrategy.sizes if s >= bits_needed)
+    actual_bits_needed = min(s for s in INT_SIZES if s >= bits_needed)
     bytes_needed = actual_bits_needed // 8
     # 3 extra bytes: two for the sampler, one for the capping value.
     assert len(v.buffer) == 3 + bytes_needed
+
+
+def test_generates_boundary_values_even_when_unlikely():
+    r = Random()
+    trillion = 10**12
+    strat = st.integers(-trillion, trillion)
+    boundary_vals = {-trillion, -trillion + 1, trillion - 1, trillion}
+    for _ in range(10_000):
+        buffer = bytes(r.randrange(0, 255) for _ in range(1000))
+        val = ConjectureData.for_buffer(buffer).draw(strat)
+        boundary_vals.discard(val)
+        if not boundary_vals:
+            break
+    else:
+        raise AssertionError(
+            f"Expected to see all boundary vals, but still have {boundary_vals}"
+        )

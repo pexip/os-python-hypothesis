@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import numpy as np
 import pytest
@@ -20,6 +15,11 @@ from pytest import param
 from hypothesis import example, given, note, settings, strategies as st
 from hypothesis.errors import InvalidArgument
 from hypothesis.extra import numpy as nps
+from hypothesis.extra._array_helpers import (
+    _SIGNATURE,
+    _hypothesis_parse_gufunc_signature,
+)
+
 from tests.common.debug import find_any, minimal
 
 
@@ -54,7 +54,7 @@ def test_numpy_signature_parses(sig):
 
     np_sig = np.lib.function_base._parse_gufunc_signature(sig)
     try:
-        hy_sig = nps._hypothesis_parse_gufunc_signature(sig, all_checks=False)
+        hy_sig = _hypothesis_parse_gufunc_signature(sig, all_checks=False)
         assert np_sig == hy_sig_2_np_sig(hy_sig)
     except InvalidArgument:
         shape_too_long = any(len(s) > 32 for s in np_sig[0] + np_sig[1])
@@ -66,14 +66,14 @@ def test_numpy_signature_parses(sig):
         sig = in_ + "->" + out.split(",(")[0]
         np_sig = np.lib.function_base._parse_gufunc_signature(sig)
         if all(len(s) <= 32 for s in np_sig[0] + np_sig[1]):
-            hy_sig = nps._hypothesis_parse_gufunc_signature(sig, all_checks=False)
+            hy_sig = _hypothesis_parse_gufunc_signature(sig, all_checks=False)
             assert np_sig == hy_sig_2_np_sig(hy_sig)
 
 
 @use_signature_examples
-@given(st.from_regex(nps._SIGNATURE))
+@given(st.from_regex(_SIGNATURE))
 def test_hypothesis_signature_parses(sig):
-    hy_sig = nps._hypothesis_parse_gufunc_signature(sig, all_checks=False)
+    hy_sig = _hypothesis_parse_gufunc_signature(sig, all_checks=False)
     try:
         np_sig = np.lib.function_base._parse_gufunc_signature(sig)
         assert np_sig == hy_sig_2_np_sig(hy_sig)
@@ -81,13 +81,13 @@ def test_hypothesis_signature_parses(sig):
         assert "?" in sig
         # We can always fix this up, and it should then always validate.
         sig = sig.replace("?", "")
-        hy_sig = nps._hypothesis_parse_gufunc_signature(sig, all_checks=False)
+        hy_sig = _hypothesis_parse_gufunc_signature(sig, all_checks=False)
         np_sig = np.lib.function_base._parse_gufunc_signature(sig)
         assert np_sig == hy_sig_2_np_sig(hy_sig)
 
 
 def test_frozen_dims_signature():
-    nps._hypothesis_parse_gufunc_signature("(2),(3)->(4)")
+    _hypothesis_parse_gufunc_signature("(2),(3)->(4)")
 
 
 @st.composite
@@ -128,7 +128,7 @@ def test_matmul_signature_can_exercise_all_combination_of_optional_dims(
             signature="(m?,n),(n,p?)->(m?,p?)", max_dims=0
         ),
         lambda shapes: shapes == target_shapes,
-        settings(max_examples=10 ** 6),
+        settings(max_examples=10**6),
     )
 
 
@@ -160,7 +160,7 @@ def test_matmul_sig_shrinks_as_documented(min_dims, min_side, n_fixed, data):
             max_dims=max_dims,
         )
     )
-    note("(smallest_shapes, result): {}".format((smallest_shapes, result)))
+    note(f"(smallest_shapes, result): {(smallest_shapes, result)}")
 
     # if min_dims >= 1 then core dims are never excluded
     # otherwise, should shrink towards excluding all optional dims
@@ -182,13 +182,13 @@ def gufunc_sig_to_einsum_sig(gufunc_sig):
         assert "x" not in labels, "we reserve x for fixed-dimensions"
         return "..." + "".join(i if not i.isdigit() else "x" for i in labels)
 
-    gufunc_sig = nps._hypothesis_parse_gufunc_signature(gufunc_sig)
+    gufunc_sig = _hypothesis_parse_gufunc_signature(gufunc_sig)
     input_sig = ",".join(map(einlabels, gufunc_sig.input_shapes))
     return input_sig + "->" + einlabels(gufunc_sig.result_shape)
 
 
 @pytest.mark.parametrize(
-    ("gufunc_sig"),
+    "gufunc_sig",
     [
         param("()->()", id="unary sum"),
         param("(),()->()", id="binary sum"),

@@ -1,24 +1,20 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
-from inspect import getfullargspec
+from inspect import signature
 
 import pytest
 
-from hypothesis import assume, given
+from hypothesis import Verbosity, assume, given, settings
 from hypothesis.errors import InvalidArgument, InvalidState
+from hypothesis.reporting import with_reporter
 from hypothesis.strategies import booleans, functions, integers
 
 
@@ -115,9 +111,10 @@ def test_functions_valid_within_given_invalid_outside():
 def test_can_call_default_like_arg():
     # This test is somewhat silly, but coverage complains about the uncovered
     # branch for calling it otherwise and alternative workarounds are worse.
-    defaults = getfullargspec(functions).kwonlydefaults
-    assert defaults["like"]() is None
-    assert defaults["returns"] is None
+    like, returns, pure = signature(functions).parameters.values()
+    assert like.default() is None
+    assert returns.default is ...
+    assert pure.default is False
 
 
 def func(arg, *, kwonly_arg):
@@ -184,3 +181,23 @@ def test_functions_pure_two_functions_same_args_different_result(f1, f2, arg1, a
     r2 = f2(arg1, arg2)
     assume(r1 != r2)
     # If this is never true, the test will fail with Unsatisfiable
+
+
+@settings(verbosity=Verbosity.verbose)
+@given(functions(pure=False))
+def test_functions_note_all_calls_to_impure_functions(f):
+    ls = []
+    with with_reporter(ls.append):
+        f()
+        f()
+    assert len(ls) == 2
+
+
+@settings(verbosity=Verbosity.verbose)
+@given(functions(pure=True))
+def test_functions_note_only_first_to_pure_functions(f):
+    ls = []
+    with with_reporter(ls.append):
+        f()
+        f()
+    assert len(ls) == 1

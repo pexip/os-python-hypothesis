@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import datetime as dt
 
@@ -23,6 +18,8 @@ from hypothesis import assume, given
 from hypothesis.errors import InvalidArgument
 from hypothesis.extra.pytz import timezones
 from hypothesis.strategies import data, datetimes, just, sampled_from, times
+from hypothesis.strategies._internal.datetime import datetime_does_not_exist
+
 from tests.common.debug import (
     assert_all_examples,
     assert_can_trigger_event,
@@ -123,36 +120,37 @@ def test_datetimes_stay_within_naive_bounds(data, lo, hi):
     assert lo <= out.replace(tzinfo=None) <= hi
 
 
-@pytest.mark.xfail(reason="is_dst not equivalent to fold when DST offset is negative")
-def test_datetimes_can_exclude_imaginary():
-    # The day of a spring-forward transition; 2am is imaginary
-    australia = {
-        "min_value": dt.datetime(2020, 10, 4),
-        "max_value": dt.datetime(2020, 10, 5),
-        "timezones": just(pytz.timezone("Australia/Sydney")),
-    }
-    # Ireland uses  *negative* offset DST, which means that our sloppy interpretation
-    # of "is_dst=not fold" bypasses the filter for imaginary times.  This is basically
-    # unfixable without redesigning pytz per PEP-495, and it's much more likely to be
-    # replaced by dateutil or PEP-615 zoneinfo in the standard library instead.
-    # (we use both so an optimistic `is_dst=bool(fold)` also fails the test)
-    ireland = {
-        "min_value": dt.datetime(2019, 3, 31),
-        "max_value": dt.datetime(2019, 4, 1),
-        "timezones": just(pytz.timezone("Europe/Dublin")),
-    }
+@pytest.mark.parametrize(
+    "kw",
+    [
+        # Ireland uses  *negative* offset DST, which means that our sloppy interpretation
+        # of "is_dst=not fold" bypasses the filter for imaginary times.  This is basically
+        # unfixable without redesigning pytz per PEP-495, and it's much more likely to be
+        # replaced by dateutil or PEP-615 zoneinfo in the standard library instead.
+        {
+            "min_value": dt.datetime(2019, 3, 31),
+            "max_value": dt.datetime(2019, 4, 1),
+            "timezones": just(pytz.timezone("Europe/Dublin")),
+        },
+        # The day of a spring-forward transition in Australia; 2am is imaginary
+        # (the common case so an optimistic `is_dst=bool(fold)` also fails the test)
+        {
+            "min_value": dt.datetime(2020, 10, 4),
+            "max_value": dt.datetime(2020, 10, 5),
+            "timezones": just(pytz.timezone("Australia/Sydney")),
+        },
+    ],
+)
+def test_datetimes_can_exclude_imaginary(kw):
     # Sanity check: fail unless those days contain an imaginary hour to filter out
-    find_any(
-        datetimes(**australia, allow_imaginary=True),
-        lambda x: not datetime_exists(x),
-    )
-    find_any(
-        datetimes(**ireland, allow_imaginary=True),
-        lambda x: not datetime_exists(x),
-    )
+    find_any(datetimes(**kw, allow_imaginary=True), lambda x: not datetime_exists(x))
+
     # Assert that with allow_imaginary=False we only generate existing datetimes.
-    assert_all_examples(
-        datetimes(**australia, allow_imaginary=False)
-        | datetimes(**ireland, allow_imaginary=False),
-        datetime_exists,
-    )
+    assert_all_examples(datetimes(**kw, allow_imaginary=False), datetime_exists)
+
+
+def test_really_weird_tzinfo_case():
+    x = dt.datetime(2019, 3, 31, 2, 30, tzinfo=pytz.timezone("Europe/Dublin"))
+    assert x.tzinfo is not x.astimezone(dt.timezone.utc).astimezone(x.tzinfo)
+    # And that weird case exercises the rare branch in our helper:
+    assert datetime_does_not_exist(x)

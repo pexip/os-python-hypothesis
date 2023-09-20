@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import threading
 from collections import Counter, defaultdict, deque
@@ -395,8 +390,8 @@ class DFA:
                         states.append(j)
                         path.append(c)
                         break
-                else:  # pragma: no cover
-                    assert False
+                else:
+                    raise NotImplementedError("Should be unreachable")
             assert self.is_accepting(states[-1])
             assert len(states) == len(path) + 1
             yield bytes(path)
@@ -496,7 +491,7 @@ class DFA:
         """Checks whether this DFA and other match precisely the same
         language.
 
-        Uses the classic algorith of Hopcroft and Karp (more or less):
+        Uses the classic algorithm of Hopcroft and Karp (more or less):
         Hopcroft, John E. A linear algorithm for testing equivalence
         of finite automata. Vol. 114. Defense Technical Information Center, 1971.
         """
@@ -590,7 +585,7 @@ class ConcreteDFA(DFA):
           (in which case they map characters to other states) or lists. If they
           are a list they may contain tuples of length 2 or 3. A tuple ``(c, j)``
           indicates that this state transitions to state ``j`` given ``c``. A
-          tuple ``(u, v, j)`` indicates this state transitiosn to state ``j``
+          tuple ``(u, v, j)`` indicates this state transitions to state ``j``
           given any ``c`` with ``u <= c <= v``.
         * ``accepting`` is a set containing the integer labels of accepting
           states.
@@ -615,14 +610,8 @@ class ConcreteDFA(DFA):
                     table[-1][1] = c
             transitions.append([(u, j) if u == v else (u, v, j) for u, v, j in table])
 
-        if self.__start != 0:
-            return "ConcreteDFA(%r, %r, start=%r)" % (
-                transitions,
-                self.__accepting,
-                self.__start,
-            )
-        else:
-            return "ConcreteDFA(%r, %r)" % (transitions, self.__accepting)
+        start = "" if self.__start == 0 else f", start={self.__start!r}"
+        return f"ConcreteDFA({transitions!r}, {self.__accepting!r}{start})"
 
     @property
     def start(self):

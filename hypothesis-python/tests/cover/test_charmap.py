@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import os
 import sys
@@ -36,7 +31,7 @@ def test_charmap_has_right_categories():
         for u, v in intervals:
             for i in range(u, v + 1):
                 real = unicodedata.category(chr(i))
-                assert real == cat, "%d is %s but reported in %s" % (i, real, cat)
+                assert real == cat, f"{i} is {real} but reported in {cat}"
 
 
 def assert_valid_range_list(ls):

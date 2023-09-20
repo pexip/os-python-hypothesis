@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import subprocess
 import sys
@@ -33,3 +28,16 @@ def test_is_not_running_under_pytest(tmpdir):
     pyfile = tmpdir.join("test.py")
     pyfile.write(FILE_TO_RUN)
     subprocess.check_call([sys.executable, str(pyfile)])
+
+
+DOES_NOT_IMPORT_HYPOTHESIS = """
+import sys
+
+def test_pytest_plugin_does_not_import_hypothesis():
+    assert "hypothesis" not in sys.modules
+"""
+
+
+def test_plugin_does_not_import_pytest(testdir):
+    testdir.makepyfile(DOES_NOT_IMPORT_HYPOTHESIS)
+    testdir.runpytest_subprocess().assert_outcomes(passed=1)

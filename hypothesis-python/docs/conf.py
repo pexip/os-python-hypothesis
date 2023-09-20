@@ -1,21 +1,17 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import datetime
 import os
 import sys
+import types
 
 import sphinx_rtd_theme
 
@@ -31,6 +27,7 @@ extensions = [
     "sphinx.ext.viewcode",
     "sphinx.ext.intersphinx",
     "hoverxref.extension",
+    "sphinx_codeautolink",
     "sphinx_selective_exclude.eager_only",
 ]
 
@@ -43,8 +40,8 @@ master_doc = "index"
 
 # General information about the project.
 project = "Hypothesis"
-copyright = "2013-%s, David R. MacIver" % datetime.datetime.utcnow().year
 author = "David R. MacIver"
+copyright = f"2013-{datetime.datetime.utcnow().year}, {author}"
 
 _d = {}
 with open(
@@ -59,8 +56,22 @@ def setup(app):
     if os.path.isfile(os.path.join(os.path.dirname(__file__), "..", "RELEASE.rst")):
         app.tags.add("has_release_file")
 
+    # patch in mock array_api namespace so we can autodoc it
+    from hypothesis.extra.array_api import (
+        RELEASED_VERSIONS,
+        make_strategies_namespace,
+        mock_xp,
+    )
 
-language = None
+    mod = types.ModuleType("xps")
+    mod.__dict__.update(
+        make_strategies_namespace(mock_xp, api_version=RELEASED_VERSIONS[-1]).__dict__
+    )
+    assert "xps" not in sys.modules
+    sys.modules["xps"] = mod
+
+
+language = "en"
 
 exclude_patterns = ["_build"]
 
@@ -71,6 +82,17 @@ todo_include_todos = False
 # See https://sphinx-hoverxref.readthedocs.io/en/latest/configuration.html
 hoverxref_auto_ref = True
 hoverxref_domains = ["py"]
+hoverxref_role_types = {
+    "attr": "tooltip",
+    "class": "tooltip",
+    "const": "tooltip",
+    "exc": "tooltip",
+    "func": "tooltip",
+    "meth": "tooltip",
+    "mod": "tooltip",
+    "obj": "tooltip",
+    "ref": "tooltip",
+}
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3/", None),
@@ -81,24 +103,32 @@ intersphinx_mapping = {
     "dateutil": ("https://dateutil.readthedocs.io/en/stable/", None),
     "redis": ("https://redis-py.readthedocs.io/en/stable/", None),
     "attrs": ("https://www.attrs.org/en/stable/", None),
+    "sphinx": ("https://www.sphinx-doc.org/en/master/", None),
 }
 
-autodoc_mock_imports = ["pandas", "redis"]
+autodoc_mock_imports = ["numpy", "pandas", "redis", "django"]
+
+codeautolink_autodoc_inject = False
+codeautolink_global_preface = """
+from hypothesis import *
+import hypothesis.strategies as st
+from hypothesis.strategies import *
+"""
 
 # This config value must be a dictionary of external sites, mapping unique
 # short alias names to a base URL and a prefix.
 # See http://sphinx-doc.org/ext/extlinks.html
 _repo = "https://github.com/HypothesisWorks/hypothesis/"
 extlinks = {
-    "commit": (_repo + "commit/%s", "commit "),
-    "gh-file": (_repo + "blob/master/%s", ""),
-    "gh-link": (_repo + "%s", ""),
-    "issue": (_repo + "issues/%s", "issue #"),
-    "pull": (_repo + "pull/%s", "pull request #"),
-    "pypi": ("https://pypi.org/project/%s", ""),
-    "bpo": ("https://bugs.python.org/issue%s", "bpo-"),
-    "np-ref": ("https://numpy.org/doc/stable/reference/%s", ""),
-    "wikipedia": ("https://en.wikipedia.org/wiki/%s", ""),
+    "commit": (_repo + "commit/%s", "commit %s"),
+    "gh-file": (_repo + "blob/master/%s", "%s"),
+    "gh-link": (_repo + "%s", "%s"),
+    "issue": (_repo + "issues/%s", "issue #%s"),
+    "pull": (_repo + "pull/%s", "pull request #%s"),
+    "pypi": ("https://pypi.org/project/%s/", "%s"),
+    "bpo": ("https://bugs.python.org/issue%s", "bpo-%s"),
+    "xp-ref": ("https://data-apis.org/array-api/latest/API_specification/%s", "%s"),
+    "wikipedia": ("https://en.wikipedia.org/wiki/%s", "%s"),
 }
 
 # -- Options for HTML output ----------------------------------------------

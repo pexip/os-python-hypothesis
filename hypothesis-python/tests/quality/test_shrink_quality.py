@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from collections import OrderedDict, namedtuple
 from fractions import Fraction
@@ -37,12 +32,26 @@ from hypothesis.strategies import (
     text,
     tuples,
 )
+
 from tests.common.debug import minimal
 from tests.common.utils import flaky
 
 
 def test_integers_from_minimizes_leftwards():
     assert minimal(integers(min_value=101)) == 101
+
+
+def test_minimize_bounded_integers_to_zero():
+    assert minimal(integers(-10, 10)) == 0
+
+
+def test_minimize_bounded_integers_to_positive():
+    zero = 0
+
+    def not_zero(x):
+        return x != zero
+
+    assert minimal(integers(-10, 10).filter(not_zero)) == 1
 
 
 def test_minimal_fractions_1():
@@ -164,20 +173,20 @@ def test_dictionary(dict_class):
 
 
 def test_minimize_single_element_in_silly_large_int_range():
-    ir = integers(-(2 ** 256), 2 ** 256)
-    assert minimal(ir, lambda x: x >= -(2 ** 255)) == 0
+    ir = integers(-(2**256), 2**256)
+    assert minimal(ir, lambda x: x >= -(2**255)) == 0
 
 
 def test_minimize_multiple_elements_in_silly_large_int_range():
     desired_result = [0] * 20
 
-    ir = integers(-(2 ** 256), 2 ** 256)
+    ir = integers(-(2**256), 2**256)
     x = minimal(lists(ir), lambda x: len(x) >= 20, timeout_after=20)
     assert x == desired_result
 
 
 def test_minimize_multiple_elements_in_silly_large_int_range_min_is_not_dupe():
-    ir = integers(0, 2 ** 256)
+    ir = integers(0, 2**256)
     target = list(range(20))
 
     x = minimal(

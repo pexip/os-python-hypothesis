@@ -1,19 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
-
-import pytest
 
 pytest_plugins = "pytester"
 
@@ -30,21 +23,41 @@ def test_to_be_skipped(xs):
     if xs == 0:
         pytest.skip()
     # But the pytest 3.0 internals don't have such an exception, so we keep
-    # going and raise a MultipleFailures error.  Ah well.
+    # going and raise a BaseExceptionGroup error.  Ah well.
     else:
         assert xs == 0
 """
 
 
-@pytest.mark.skipif(
-    pytest.__version__.startswith("3.0"),
-    reason="Pytest 3.0 predates a Skipped exception type, so we can't hook into it.",
-)
 def test_no_falsifying_example_if_pytest_skip(testdir):
     """If ``pytest.skip() is called during a test, Hypothesis should not
     continue running the test and shrink process, nor should it print anything
     about falsifying examples."""
     script = testdir.makepyfile(PYTEST_TESTSUITE)
-    result = testdir.runpytest(script, "--verbose", "--strict", "-m", "hypothesis")
+    result = testdir.runpytest(
+        script, "--verbose", "--strict-markers", "-m", "hypothesis"
+    )
     out = "\n".join(result.stdout.lines)
     assert "Falsifying example" not in out
+
+
+def test_issue_3453_regression(testdir):
+    """If ``pytest.skip() is called during a test, Hypothesis should not
+    continue running the test and shrink process, nor should it print anything
+    about falsifying examples."""
+    script = testdir.makepyfile(
+        """
+from hypothesis import example, given, strategies as st
+import pytest
+
+@given(value=st.none())
+@example("hello")
+@example("goodbye")
+def test_skip_on_first_skipping_example(value):
+    assert value is not None
+    assert value != "hello"  # queue up a non-skip error which must be discarded
+    pytest.skip()
+"""
+    )
+    result = testdir.runpytest(script, "--tb=native")
+    result.assert_outcomes(skipped=1)

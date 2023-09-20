@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 
 class IntervalSet:
@@ -33,7 +28,7 @@ class IntervalSet:
         if i < 0:
             i = self.size + i
         if i < 0 or i >= self.size:
-            raise IndexError("Invalid index %d for [0, %d)" % (i, self.size))
+            raise IndexError(f"Invalid index {i} for [0, {self.size})")
         # Want j = maximal such that offsets[j] <= i
 
         j = len(self.intervals) - 1
@@ -55,17 +50,17 @@ class IntervalSet:
         return r
 
     def __repr__(self):
-        return "IntervalSet(%r)" % (self.intervals,)
+        return f"IntervalSet({self.intervals!r})"
 
     def index(self, value):
         for offset, (u, v) in zip(self.offsets, self.intervals):
             if u == value:
                 return offset
             elif u > value:
-                raise ValueError("%d is not in list" % (value,))
+                raise ValueError(f"{value} is not in list")
             if value <= v:
                 return offset + (value - u)
-        raise ValueError("%d is not in list" % (value,))
+        raise ValueError(f"{value} is not in list")
 
     def index_above(self, value):
         for offset, (u, v) in zip(self.offsets, self.intervals):

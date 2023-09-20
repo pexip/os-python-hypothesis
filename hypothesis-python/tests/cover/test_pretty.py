@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 """This file originates in the IPython project and is made use of under the
 following licensing terms:
@@ -53,41 +48,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
 import re
+import warnings
 from collections import Counter, OrderedDict, defaultdict, deque
-from io import StringIO
+from enum import Enum
 
 import pytest
 
 from hypothesis.internal.compat import PYPY
+from hypothesis.strategies._internal.numbers import SIGNALING_NAN
 from hypothesis.vendor import pretty
-from tests.common.utils import capture_out
-
-
-def unicode_to_str(x, encoding=None):
-    return x
-
-
-def assert_equal(x, y):
-    assert x == y
-
-
-def assert_true(x):
-    assert x
-
-
-def assert_in(x, xs):
-    assert x in xs
-
-
-def skip_without(mod):
-    try:
-        __import__(mod)
-        return lambda f: f
-    except ImportError:
-        return pytest.mark.skipif(True, reason="Missing %s" % (mod,))
-
-
-assert_raises = pytest.raises
 
 
 class MyList:
@@ -99,7 +68,7 @@ class MyList:
             p.text("MyList(...)")
         else:
             with p.group(3, "MyList(", ")"):
-                for (i, child) in enumerate(self.content):
+                for i, child in enumerate(self.content):
                     if i:
                         p.text(",")
                         p.breakable()
@@ -166,6 +135,13 @@ def test_list():
 def test_dict():
     assert pretty.pretty({}) == "{}"
     assert pretty.pretty({1: 1}) == "{1: 1}"
+    assert pretty.pretty({1: 1, 0: 0}) == "{1: 1, 0: 0}"
+
+    # Check that pretty-printing doesn't trigger a BytesWarning under `python -bb`
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", BytesWarning)
+        x = {"": 0, b"": 0}
+    assert pretty.pretty(x) == "{'': 0, b'': 0}"
 
 
 def test_tuple():
@@ -205,9 +181,9 @@ def test_indentation():
     """Test correct indentation in groups."""
     count = 40
     gotoutput = pretty.pretty(MyList(range(count)))
-    expectedoutput = "MyList(\n" + ",\n".join("   %d" % i for i in range(count)) + ")"
+    expectedoutput = "MyList(\n" + ",\n".join(f"   {i}" for i in range(count)) + ")"
 
-    assert_equal(gotoutput, expectedoutput)
+    assert gotoutput == expectedoutput
 
 
 def test_dispatch():
@@ -216,7 +192,7 @@ def test_dispatch():
     gotoutput = pretty.pretty(MyDict())
     expectedoutput = "MyDict(...)"
 
-    assert_equal(gotoutput, expectedoutput)
+    assert gotoutput == expectedoutput
 
 
 def test_callability_checking():
@@ -225,7 +201,7 @@ def test_callability_checking():
     gotoutput = pretty.pretty(Dummy2())
     expectedoutput = "Dummy1(...)"
 
-    assert_equal(gotoutput, expectedoutput)
+    assert gotoutput == expectedoutput
 
 
 def test_sets():
@@ -250,7 +226,7 @@ def test_sets():
     ]
     for obj, expected_output in zip(objects, expected):
         got_output = pretty.pretty(obj)
-        assert_equal(got_output, expected_output)
+        assert got_output == expected_output
 
 
 def test_unsortable_set():
@@ -267,38 +243,29 @@ def test_unsortable_dict():
         assert pretty.pretty(x) in p
 
 
-@skip_without("xxlimited")
-def test_pprint_heap_allocated_type():
-    """Test that pprint works for heap allocated types."""
-    import xxlimited
-
-    output = pretty.pretty(xxlimited.Null)
-    assert_equal(output, "xxlimited.Null")
-
-
 def test_pprint_nomod():
     """Test that pprint works for classes with no __module__."""
     output = pretty.pretty(NoModule)
-    assert_equal(output, "NoModule")
+    assert output == "NoModule"
 
 
 def test_pprint_break():
     """Test that p.break_ produces expected output."""
     output = pretty.pretty(Breaking())
     expected = "TG: Breaking(\n    ):"
-    assert_equal(output, expected)
+    assert output == expected
 
 
 def test_pprint_break_repr():
     """Test that p.break_ is used in repr."""
     output = pretty.pretty(BreakingReprParent())
     expected = "TG: Breaking(\n    ):"
-    assert_equal(output, expected)
+    assert output == expected
 
 
 def test_bad_repr():
     """Don't catch bad repr errors."""
-    with assert_raises(ZeroDivisionError):
+    with pytest.raises(ZeroDivisionError):
         pretty.pretty(BadRepr())
 
 
@@ -319,7 +286,7 @@ class ReallyBadRepr:
 
 
 def test_really_bad_repr():
-    with assert_raises(BadException):
+    with pytest.raises(BadException):
         pretty.pretty(ReallyBadRepr())
 
 
@@ -336,12 +303,11 @@ try:
 
     def test_super_repr():
         output = pretty.pretty(super(SA))
-        assert_in("SA", output)
+        assert "SA" in output
 
         sb = SB()
         output = pretty.pretty(super(SA, sb))
-        assert_in("SA", output)
-
+        assert "SA" in output
 
 except AttributeError:
 
@@ -355,41 +321,40 @@ def test_long_list():
     lis = list(range(10000))
     p = pretty.pretty(lis)
     last2 = p.rsplit("\n", 2)[-2:]
-    assert_equal(last2, [" 999,", " ...]"])
+    assert last2 == [" 999,", " ...]"]
 
 
 def test_long_set():
     s = set(range(10000))
     p = pretty.pretty(s)
     last2 = p.rsplit("\n", 2)[-2:]
-    assert_equal(last2, [" 999,", " ...}"])
+    assert last2 == [" 999,", " ...}"]
 
 
 def test_long_tuple():
     tup = tuple(range(10000))
     p = pretty.pretty(tup)
     last2 = p.rsplit("\n", 2)[-2:]
-    assert_equal(last2, [" 999,", " ...)"])
+    assert last2 == [" 999,", " ...)"]
 
 
 def test_long_dict():
     d = {n: n for n in range(10000)}
     p = pretty.pretty(d)
     last2 = p.rsplit("\n", 2)[-2:]
-    assert_equal(last2, [" 999: 999,", " ...}"])
+    assert last2 == [" 999: 999,", " ...}"]
 
 
 def test_unbound_method():
-    output = pretty.pretty(MyObj.somemethod)
-    assert_in("MyObj.somemethod", output)
+    assert pretty.pretty(MyObj.somemethod) == "somemethod"
 
 
 class MetaClass(type):
-    def __new__(cls, name):
-        return type.__new__(cls, name, (object,), {"name": name})
+    def __new__(metacls, name):
+        return type.__new__(metacls, name, (object,), {"name": name})
 
-    def __repr__(self):
-        return "[CUSTOM REPR FOR CLASS %s]" % self.name
+    def __repr__(cls):
+        return f"[CUSTOM REPR FOR CLASS {cls.name}]"
 
 
 ClassWithMeta = MetaClass("ClassWithMeta")
@@ -397,22 +362,21 @@ ClassWithMeta = MetaClass("ClassWithMeta")
 
 def test_metaclass_repr():
     output = pretty.pretty(ClassWithMeta)
-    assert_equal(output, "[CUSTOM REPR FOR CLASS ClassWithMeta]")
+    assert output == "[CUSTOM REPR FOR CLASS ClassWithMeta]"
 
 
 def test_unicode_repr():
     u = "üniçodé"
-    ustr = unicode_to_str(u)
 
     class C:
         def __repr__(self):
-            return ustr
+            return u
 
     c = C()
     p = pretty.pretty(c)
-    assert_equal(p, u)
+    assert p == u
     p = pretty.pretty([c])
-    assert_equal(p, "[%s]" % u)
+    assert p == f"[{u}]"
 
 
 def test_basic_class():
@@ -423,15 +387,13 @@ def test_basic_class():
 
     type_pprint_wrapper.called = False
 
-    stream = StringIO()
-    printer = pretty.RepresentationPrinter(stream)
+    printer = pretty.RepresentationPrinter()
     printer.type_pprinters[type] = type_pprint_wrapper
     printer.pretty(MyObj)
-    printer.flush()
-    output = stream.getvalue()
+    output = printer.getvalue()
 
-    assert_equal(output, "%s.MyObj" % __name__)
-    assert_true(type_pprint_wrapper.called)
+    assert output == f"{__name__}.MyObj"
+    assert type_pprint_wrapper.called
 
 
 def test_collections_defaultdict():
@@ -454,7 +416,7 @@ def test_collections_defaultdict():
         (b, "defaultdict(list, {'key': defaultdict(...)})"),
     ]
     for obj, expected in cases:
-        assert_equal(pretty.pretty(obj), expected)
+        assert pretty.pretty(obj) == expected
 
 
 @pytest.mark.skipif(PYPY, reason="slightly different on PyPy3")
@@ -481,7 +443,7 @@ def test_collections_ordereddict():
         (a, "OrderedDict([('key', OrderedDict(...))])"),
     ]
     for obj, expected in cases:
-        assert_equal(pretty.pretty(obj), expected)
+        assert pretty.pretty(obj) == expected
 
 
 def test_collections_deque():
@@ -517,7 +479,7 @@ def test_collections_deque():
         (a, "deque([deque(...)])"),
     ]
     for obj, expected in cases:
-        assert_equal(pretty.pretty(obj), expected)
+        assert pretty.pretty(obj) == expected
 
 
 def test_collections_counter():
@@ -530,7 +492,7 @@ def test_collections_counter():
         (MyCounter(a=1), "MyCounter({'a': 1})"),
     ]
     for obj, expected in cases:
-        assert_equal(pretty.pretty(obj), expected)
+        assert pretty.pretty(obj) == expected
 
 
 def test_cyclic_list():
@@ -582,13 +544,6 @@ def test_cyclic_set():
     assert pretty.pretty(x) == "{{...}}"
 
 
-def test_pprint():
-    t = {"hi": 1}
-    with capture_out() as o:
-        pretty.pprint(t)
-    assert o.getvalue().strip() == pretty.pretty(t)
-
-
 class BigList(list):
     def _repr_pretty_(self, printer, cycle):
         if cycle:
@@ -619,51 +574,58 @@ def test_re_evals():
     for r in [
         re.compile(r"hi"),
         re.compile(r"b\nc", re.MULTILINE),
-        re.compile(br"hi", 0),
+        re.compile(rb"hi", 0),
         re.compile("foo", re.MULTILINE | re.UNICODE),
     ]:
         r2 = eval(pretty.pretty(r), globals())
         assert r.pattern == r2.pattern and r.flags == r2.flags
 
 
-class CustomStuff:
-    def __init__(self):
-        self.hi = 1
-        self.bye = "fish"
-        self.spoon = self
-
-    @property
-    def oops(self):
-        raise AttributeError("Nope")
-
-    def squirrels(self):
-        pass
-
-
-def test_custom():
-    assert "bye" not in pretty.pretty(CustomStuff())
-    assert "bye=" in pretty.pretty(CustomStuff(), verbose=True)
-    assert "squirrels" not in pretty.pretty(CustomStuff(), verbose=True)
-
-
 def test_print_builtin_function():
-    assert pretty.pretty(abs) == "<function abs>"
+    assert pretty.pretty(abs) == "abs"
 
 
 def test_pretty_function():
-    assert "." in pretty.pretty(test_pretty_function)
-
-
-def test_empty_printer():
-    printer = pretty.RepresentationPrinter(
-        StringIO(),
-        singleton_pprinters={},
-        type_pprinters={int: pretty._repr_pprint, list: pretty._repr_pprint},
-        deferred_pprinters={},
-    )
-    printer.pretty([1, 2, 3])
-    assert printer.output.getvalue() == "[1, 2, 3]"
+    assert pretty.pretty(test_pretty_function) == "test_pretty_function"
 
 
 def test_breakable_at_group_boundary():
-    assert "\n" in pretty.pretty([[], "000000"], max_width=5)
+    assert "\n" in pretty.pretty([[], "0" * 80])
+
+
+@pytest.mark.parametrize(
+    "obj, rep",
+    [
+        (float("nan"), "nan"),
+        (-float("nan"), "-nan"),
+        (SIGNALING_NAN, "nan  # Saw 1 signaling NaN"),
+        (-SIGNALING_NAN, "-nan  # Saw 1 signaling NaN"),
+        ((SIGNALING_NAN, SIGNALING_NAN), "(nan, nan)  # Saw 2 signaling NaNs"),
+    ],
+)
+def test_nan_reprs(obj, rep):
+    assert pretty.pretty(obj) == rep
+
+
+def _repr_call(*args, **kwargs):
+    p = pretty.RepresentationPrinter()
+    p.repr_call(*args, **kwargs)
+    return p.getvalue()
+
+
+@pytest.mark.parametrize("func_name", ["f", "lambda: ...", "lambda *args: ..."])
+def test_repr_call(func_name):
+    fn = f"({func_name})" if func_name.startswith(("lambda:", "lambda ")) else func_name
+    aas = "a" * 100
+    assert _repr_call(func_name, (1, 2), {}) == f"{fn}(1, 2)"
+    assert _repr_call(func_name, (aas,), {}) == f"{fn}(\n    {aas!r},\n)"
+    assert _repr_call(func_name, (), {"a": 1, "b": 2}) == f"{fn}(a=1, b=2)"
+    assert _repr_call(func_name, (), {"x": aas}) == f"{fn}(\n    x={aas!r},\n)"
+
+
+class AnEnum(Enum):
+    SOME_MEMBER = 1
+
+
+def test_pretty_prints_enums_as_code():
+    assert pretty.pretty(AnEnum.SOME_MEMBER) == "AnEnum.SOME_MEMBER"

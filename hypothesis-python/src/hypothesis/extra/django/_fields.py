@@ -1,26 +1,23 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import re
 import string
 from datetime import timedelta
 from decimal import Decimal
+from functools import lru_cache
 from typing import Any, Callable, Dict, Type, TypeVar, Union
 
 import django
 from django import forms as df
+from django.contrib.auth.forms import UsernameField
 from django.core.validators import (
     validate_ipv4_address,
     validate_ipv6_address,
@@ -30,7 +27,6 @@ from django.db import models as dm
 
 from hypothesis import strategies as st
 from hypothesis.errors import InvalidArgument, ResolutionFailed
-from hypothesis.extra.pytz import timezones
 from hypothesis.internal.validation import check_type
 from hypothesis.provisional import urls
 from hypothesis.strategies import emails
@@ -57,8 +53,24 @@ def integers_for_field(min_value, max_value):
     return inner
 
 
+@lru_cache()
+def timezones():
+    # From Django 4.0, the default is to use zoneinfo instead of pytz.
+    assert getattr(django.conf.settings, "USE_TZ", False)
+    if getattr(django.conf.settings, "USE_DEPRECATED_PYTZ", True):
+        from hypothesis.extra.pytz import timezones
+    else:
+        from hypothesis.strategies import timezones
+
+    return timezones()
+
+
 # Mapping of field types, to strategy objects or functions of (type) -> strategy
-_global_field_lookup = {
+_FieldLookUpType = Dict[
+    Type[AnyField],
+    Union[st.SearchStrategy, Callable[[Any], st.SearchStrategy]],
+]
+_global_field_lookup: _FieldLookUpType = {
     dm.SmallIntegerField: integers_for_field(-32768, 32767),
     dm.IntegerField: integers_for_field(-2147483648, 2147483647),
     dm.BigIntegerField: integers_for_field(-9223372036854775808, 9223372036854775807),
@@ -81,7 +93,7 @@ _global_field_lookup = {
     df.NullBooleanField: st.one_of(st.none(), st.booleans()),
     df.URLField: urls(),
     df.UUIDField: st.uuids(),
-}  # type: Dict[Type[AnyField], Union[st.SearchStrategy, Callable[[Any], st.SearchStrategy]]]
+}
 
 _ipv6_strings = st.one_of(
     st.ip_addresses(v=6).map(str),
@@ -136,7 +148,7 @@ def _for_form_time(field):
 def _for_duration(field):
     # SQLite stores timedeltas as six bytes of microseconds
     if using_sqlite():
-        delta = timedelta(microseconds=2 ** 47 - 1)
+        delta = timedelta(microseconds=2**47 - 1)
         return st.timedeltas(-delta, delta)
     return st.timedeltas()
 
@@ -174,14 +186,14 @@ def _for_form_ip(field):
         return st.ip_addresses(v=4).map(str)
     if validate_ipv6_address in field.default_validators:
         return _ipv6_strings
-    raise ResolutionFailed("No IP version validator on field=%r" % field)
+    raise ResolutionFailed(f"No IP version validator on field={field!r}")
 
 
 @register_for(dm.DecimalField)
 @register_for(df.DecimalField)
 def _for_decimal(field):
     min_value, max_value = numeric_bounds_from_validators(field)
-    bound = Decimal(10 ** field.max_digits - 1) / (10 ** field.decimal_places)
+    bound = Decimal(10**field.max_digits - 1) / (10**field.decimal_places)
     return st.decimals(
         min_value=max(min_value, -bound),
         max_value=min(max_value, bound),
@@ -212,6 +224,7 @@ def _for_binary(field):
 @register_for(dm.TextField)
 @register_for(df.CharField)
 @register_for(df.RegexField)
+@register_for(UsernameField)
 def _for_text(field):
     # We can infer a vastly more precise strategy by considering the
     # validators as well as the field type.  This is a minimal proof of
@@ -229,7 +242,7 @@ def _for_text(field):
         # Not maximally efficient, but it makes pathological cases rarer.
         # If you want a challenge: extend https://qntm.org/greenery to
         # compute intersections of the full Python regex language.
-        return st.one_of(*[st.from_regex(r) for r in regexes])
+        return st.one_of(*(st.from_regex(r) for r in regexes))
     # If there are no (usable) regexes, we use a standard text strategy.
     min_size, max_size = length_bounds_from_validators(field)
     strategy = st.text(
@@ -262,14 +275,12 @@ def register_field_strategy(
     ``strategy`` must be a :class:`~hypothesis.strategies.SearchStrategy`.
     """
     if not issubclass(field_type, (dm.Field, df.Field)):
-        raise InvalidArgument(
-            "field_type=%r must be a subtype of Field" % (field_type,)
-        )
+        raise InvalidArgument(f"field_type={field_type!r} must be a subtype of Field")
     check_type(st.SearchStrategy, strategy, "strategy")
     if field_type in _global_field_lookup:
         raise InvalidArgument(
-            "field_type=%r already has a registered strategy (%r)"
-            % (field_type, _global_field_lookup[field_type])
+            f"field_type={field_type!r} already has a registered "
+            f"strategy ({_global_field_lookup[field_type]!r})"
         )
     if issubclass(field_type, dm.AutoField):
         raise InvalidArgument("Cannot register a strategy for an AutoField")
@@ -281,7 +292,8 @@ def from_field(field: F) -> st.SearchStrategy[Union[F, None]]:
 
     This function is used by :func:`~hypothesis.extra.django.from_form` and
     :func:`~hypothesis.extra.django.from_model` for any fields that require
-    a value, or for which you passed :obj:`hypothesis.infer`.
+    a value, or for which you passed ``...`` (:obj:`python:Ellipsis`) to infer
+    a strategy from an annotation.
 
     It's pretty similar to the core :func:`~hypothesis.strategies.from_type`
     function, with a subtle but important difference: ``from_field`` takes a
@@ -290,7 +302,7 @@ def from_field(field: F) -> st.SearchStrategy[Union[F, None]]:
     """
     check_type((dm.Field, df.Field), field, "field")
     if getattr(field, "choices", False):
-        choices = []  # type: list
+        choices: list = []
         for value, name_or_optgroup in field.choices:
             if isinstance(name_or_optgroup, (list, tuple)):
                 choices.extend(key for key, _ in name_or_optgroup)
@@ -312,7 +324,7 @@ def from_field(field: F) -> st.SearchStrategy[Union[F, None]]:
         if type(field) not in _global_field_lookup:
             if getattr(field, "null", False):
                 return st.none()
-            raise ResolutionFailed("Could not infer a strategy for %r", (field,))
+            raise ResolutionFailed(f"Could not infer a strategy for {field!r}")
         strategy = _global_field_lookup[type(field)]  # type: ignore
         if not isinstance(strategy, st.SearchStrategy):
             strategy = strategy(field)

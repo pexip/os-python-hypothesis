@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import gc
 import random
@@ -20,7 +15,9 @@ import time as time_module
 
 import pytest
 
+from hypothesis._settings import is_in_ci
 from hypothesis.internal.detection import is_hypothesis_test
+
 from tests.common import TIME_INCREMENT
 from tests.common.setup import run
 
@@ -29,14 +26,24 @@ run()
 # Skip collection of tests which require the Django test runner,
 # or that don't work on the current version of Python.
 collect_ignore_glob = ["django/*"]
-if sys.version_info < (3, 7):
-    collect_ignore_glob.append("cover/*py37*")
 if sys.version_info < (3, 8):
+    collect_ignore_glob.append("array_api")
     collect_ignore_glob.append("cover/*py38*")
+if sys.version_info < (3, 9):
+    collect_ignore_glob.append("cover/*py39*")
+if sys.version_info < (3, 10):
+    collect_ignore_glob.append("cover/*py310*")
+
+if sys.version_info >= (3, 11):
+    collect_ignore_glob.append("cover/test_asyncio.py")  # @asyncio.coroutine removed
 
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow: pandas expects this marker to exist.")
+    config.addinivalue_line(
+        "markers",
+        "xp_min_version(api_version): run when greater or equal to api_version",
+    )
 
 
 def pytest_addoption(parser):
@@ -54,7 +61,7 @@ def consistently_increment_time(monkeypatch):
     """Rather than rely on real system time we monkey patch time.time so that
     it passes at a consistent rate between calls.
 
-    The reason for this is that when these tests run on travis, performance is
+    The reason for this is that when these tests run in CI, their performance is
     extremely variable and the VM the tests are on might go to sleep for a bit,
     introducing arbitrary delays. This can cause a number of tests to fail
     flakily.
@@ -93,19 +100,25 @@ def pytest_runtest_call(item):
     # See: https://github.com/HypothesisWorks/hypothesis/issues/1919
     if not (hasattr(item, "obj") and is_hypothesis_test(item.obj)):
         yield
+    elif "pytest_randomly" in sys.modules:
+        # See https://github.com/HypothesisWorks/hypothesis/issues/3041 - this
+        # branch exists to make it easier on external contributors, but should
+        # never run in our CI (because that would disable the check entirely).
+        assert not is_in_ci()
+        yield
     else:
         # We start by peturbing the state of the PRNG, because repeatedly
         # leaking PRNG state resets state_after to the (previously leaked)
         # state_before, and that just shows as "no use of random".
-        random.seed(independent_random.randrange(2 ** 32))
+        random.seed(independent_random.randrange(2**32))
         before = random.getstate()
         yield
         after = random.getstate()
         if before != after:
             if after in random_states_after_tests:
                 raise Exception(
-                    "%r and %r both used the `random` module, and finished with the "
+                    f"{item.nodeid!r} and {random_states_after_tests[after]!r} "
+                    "both used the `random` module, and finished with the "
                     "same global `random.getstate()`; this is probably a nasty bug!"
-                    % (item.nodeid, random_states_after_tests[after])
                 )
             random_states_after_tests[after] = item.nodeid

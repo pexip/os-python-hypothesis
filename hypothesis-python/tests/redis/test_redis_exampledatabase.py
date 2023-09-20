@@ -1,24 +1,46 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
+import pytest
 from fakeredis import FakeRedis
 
 from hypothesis import strategies as st
 from hypothesis.database import InMemoryExampleDatabase
+from hypothesis.errors import InvalidArgument
 from hypothesis.extra.redis import RedisExampleDatabase
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, rule
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"redis": "not a redis instance"},
+        {"redis": FakeRedis(), "expire_after": 10},  # not a timedelta
+        {"redis": FakeRedis(), "key_prefix": "not a bytestring"},
+    ],
+)
+def test_invalid_args_raise(kw):
+    with pytest.raises(InvalidArgument):
+        RedisExampleDatabase(**kw)
+
+
+def test_all_methods():
+    db = RedisExampleDatabase(FakeRedis())
+    db.save(b"key1", b"value")
+    assert list(db.fetch(b"key1")) == [b"value"]
+    db.move(b"key1", b"key2", b"value")
+    assert list(db.fetch(b"key1")) == []
+    assert list(db.fetch(b"key2")) == [b"value"]
+    db.delete(b"key2", b"value")
+    assert list(db.fetch(b"key2")) == []
+    db.delete(b"key2", b"unknown value")
 
 
 class DatabaseComparison(RuleBasedStateMachine):

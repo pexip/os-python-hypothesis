@@ -25,11 +25,10 @@ changes in patch releases.
 Python versions
 ---------------
 
-Hypothesis is supported and tested on CPython 3.6+, i.e.
-`all versions of CPython with upstream support <https://devguide.python.org/#status-of-python-branches>`_,
-
-Hypothesis also supports the latest PyPy for Python 3.6.
-32-bit builds of CPython also work, though they are currently only tested on Windows.
+Hypothesis is supported and tested on CPython 3.7+, i.e.
+`all versions of CPython with upstream support <https://devguide.python.org/versions/>`_,
+along with PyPy for the same versions.
+32-bit builds of CPython also work, though we only test them on Windows.
 
 In general Hypothesis does not officially support anything except the latest
 patch release of any version of Python it supports. Earlier releases should work
@@ -80,7 +79,7 @@ In terms of what's actually *known* to work:
     and avoid poor interactions with Pytest fixtures.
   * Nose works fine with Hypothesis, and this is tested as part of the CI. ``yield`` based
     tests simply won't work.
-  * Integration with Django's testing requires use of the :ref:`hypothesis-django` package.
+  * Integration with Django's testing requires use of the :ref:`hypothesis-django` extra.
     The issue is that in Django's tests' normal mode of execution it will reset the
     database once per test rather than once per example, which is not what you want.
   * :pypi:`Coverage` works out of the box with Hypothesis; our own test suite has
@@ -99,7 +98,6 @@ Regularly verifying this
 ------------------------
 
 Everything mentioned above as explicitly supported is checked on every commit
-with `Travis <https://travis-ci.org/HypothesisWorks/hypothesis>`__, and
-`Azure Pipelines <https://dev.azure.com/HypothesisWorks/Hypothesis/>`__.
+with :gh-link:`GitHub Actions <actions>`.
 Our continuous delivery pipeline runs all of these checks before publishing
 each release, so when we say they're supported we really mean it.

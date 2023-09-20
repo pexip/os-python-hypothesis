@@ -1,17 +1,14 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
+
+import sys
 
 import numpy as np
 import pytest
@@ -19,8 +16,10 @@ import pytest
 from hypothesis import assume, given, settings, strategies as st
 from hypothesis.errors import InvalidArgument
 from hypothesis.extra import numpy as nps
+from hypothesis.internal.floats import width_smallest_normals
 from hypothesis.strategies._internal import SearchStrategy
-from tests.common.debug import find_any
+
+from tests.common.debug import assert_no_examples, find_any
 
 STANDARD_TYPES = [
     np.dtype(t)
@@ -46,6 +45,11 @@ STANDARD_TYPES = [
         bytes,
     )
 ]
+for nonstandard_typecode in ["g", "G", "S1", "q", "Q"]:
+    try:
+        STANDARD_TYPES.append(np.dtype(nonstandard_typecode))
+    except Exception:
+        pass
 
 
 @given(nps.nested_dtypes())
@@ -103,11 +107,11 @@ def test_can_unicode_strings_without_decode_error(arr):
     pass
 
 
-@pytest.mark.xfail(strict=False, reason="mitigation for issue above")
+@pytest.mark.skipif(not nps.NP_FIXED_UNICODE, reason="workaround for old bug")
 def test_unicode_string_dtypes_need_not_be_utf8():
     def cannot_encode(string):
         try:
-            string.encode("utf-8")
+            string.encode()
             return False
         except UnicodeEncodeError:
             return True
@@ -195,9 +199,29 @@ def test_arrays_gives_useful_error_on_inconsistent_time_unit():
         (float, {"allow_nan": False}, lambda x: not np.isnan(x)),
         (float, {"allow_infinity": False}, lambda x: not np.isinf(x)),
         (float, {"allow_nan": False, "allow_infinity": False}, np.isfinite),
+        # Complex numbers: bounds and excluding nonfinites
         (complex, {"allow_nan": False}, lambda x: not np.isnan(x)),
         (complex, {"allow_infinity": False}, lambda x: not np.isinf(x)),
         (complex, {"allow_nan": False, "allow_infinity": False}, np.isfinite),
+        (
+            complex,
+            {"min_magnitude": 1e3},
+            lambda x: abs(x) >= 1e3 * (1 - sys.float_info.epsilon),
+        ),
+        (
+            complex,
+            {"max_magnitude": 1e2},
+            lambda x: abs(x) <= 1e2 * (1 + sys.float_info.epsilon),
+        ),
+        (
+            complex,
+            {"min_magnitude": 1, "max_magnitude": 1e6},
+            lambda x: (
+                (1 - sys.float_info.epsilon)
+                <= abs(x)
+                <= 1e6 * (1 + sys.float_info.epsilon)
+            ),
+        ),
         # Integer bounds, limited to the representable range
         ("int8", {"min_value": -1, "max_value": 1}, lambda x: -1 <= x <= 1),
         ("uint8", {"min_value": 1, "max_value": 2}, lambda x: 1 <= x <= 2),
@@ -221,3 +245,36 @@ def test_customize_structured_dtypes(x):
     assert len(name) >= 1
     assert 0 <= age <= 255
     assert not np.isnan(score)
+
+
+@pytest.mark.parametrize("allow_subnormal", [False, True])
+@pytest.mark.parametrize("width", [32, 64])
+def test_float_subnormal_generation(allow_subnormal, width):
+    dtype = np.dtype(f"float{width}")
+    strat = nps.from_dtype(dtype, allow_subnormal=allow_subnormal).filter(
+        lambda n: n != 0
+    )
+    smallest_normal = width_smallest_normals[width]
+    condition = lambda n: -smallest_normal < n < smallest_normal
+    if allow_subnormal:
+        find_any(strat, condition)
+    else:
+        assert_no_examples(strat, condition)
+
+
+@pytest.mark.parametrize("allow_subnormal", [False, True])
+@pytest.mark.parametrize("width", [64, 128])
+def test_complex_subnormal_generation(allow_subnormal, width):
+    dtype = np.dtype(f"complex{width}")
+    strat = nps.from_dtype(dtype, allow_subnormal=allow_subnormal).filter(
+        lambda n: n.real != 0 and n.imag != 0
+    )
+    smallest_normal = width_smallest_normals[width / 2]
+    condition = lambda n: (
+        -smallest_normal < n.real < smallest_normal
+        or -smallest_normal < n.imag < smallest_normal
+    )
+    if allow_subnormal:
+        find_any(strat, condition)
+    else:
+        assert_no_examples(strat, condition)

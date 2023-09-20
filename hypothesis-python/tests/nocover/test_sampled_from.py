@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import enum
 
@@ -19,10 +14,11 @@ import pytest
 
 from hypothesis import given, strategies as st
 from hypothesis.errors import InvalidArgument
+
 from tests.common.utils import counts_calls, fails_with
 
 
-@pytest.mark.parametrize("n", [100, 10 ** 5, 10 ** 6, 2 ** 25])
+@pytest.mark.parametrize("n", [100, 10**5, 10**6, 2**25])
 def test_filter_large_lists(n):
     filter_limit = 100 * 10000
 
@@ -63,7 +59,7 @@ def test_chained_filters_find_rare_value(x):
 @fails_with(InvalidArgument)
 @given(st.sets(st.sampled_from(range(10)), min_size=11))
 def test_unsat_sets_of_samples(x):
-    assert False
+    raise AssertionError
 
 
 @given(st.sets(st.sampled_from(range(50)), min_size=50))

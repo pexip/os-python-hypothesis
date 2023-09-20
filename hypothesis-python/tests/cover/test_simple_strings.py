@@ -1,22 +1,17 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from hypothesis import given
 from hypothesis.strategies import binary, characters, text, tuples
+
 from tests.common.debug import minimal
-from tests.common.utils import fails_with
 
 
 def test_can_minimize_up_to_zero():
@@ -59,12 +54,6 @@ def test_finds_single_element_strings():
     assert minimal(text(), bool) == "0"
 
 
-@fails_with(AssertionError)
-@given(binary())
-def test_binary_generates_large_examples(x):
-    assert len(x) <= 20
-
-
 @given(binary(max_size=5))
 def test_binary_respects_max_size(x):
     assert len(x) <= 5
@@ -92,7 +81,7 @@ def test_respects_alphabet_if_string(xs):
 
 @given(text())
 def test_can_encode_as_utf8(s):
-    s.encode("utf-8")
+    s.encode()
 
 
 @given(text(characters(blacklist_characters="\n")))
@@ -117,6 +106,6 @@ def test_fixed_size_bytes_just_draw_bytes():
     assert x.draw(binary(min_size=3, max_size=3)) == b"foo"
 
 
-@given(text(max_size=10 ** 6))
+@given(text(max_size=10**6))
 def test_can_set_max_size_large(s):
     pass

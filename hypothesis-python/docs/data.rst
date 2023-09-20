@@ -68,6 +68,8 @@ hurts reuse because you then have to repeat the adaption in every test.
 Hypothesis gives you ways to build strategies from other strategies given
 functions for transforming the data.
 
+.. _mapping:
+
 -------
 Mapping
 -------
@@ -84,7 +86,8 @@ e.g.:
     [-25527, -24245, -23118, -93, -70, -7, 0, 39, 40, 65, 88, 112, 6189, 9480, 19469, 27256, 32526, 1566924430]
 
 Note that many things that you might use mapping for can also be done with
-:func:`~hypothesis.strategies.builds`.
+:func:`~hypothesis.strategies.builds`, and if you find yourself indexing
+into a tuple within ``.map()`` it's probably time to use that instead.
 
 .. _filtering:
 
@@ -144,7 +147,8 @@ length:
 .. code-block:: pycon
 
     >>> rectangle_lists = integers(min_value=0, max_value=10).flatmap(
-    ... lambda n: lists(lists(integers(), min_size=n, max_size=n)))
+    ...     lambda n: lists(lists(integers(), min_size=n, max_size=n))
+    ... )
     >>> rectangle_lists.example()
     []
     >>> rectangle_lists.filter(lambda x: len(x) >= 10).example()
@@ -189,9 +193,12 @@ for your data type, returns a new strategy for it. So for example:
 
 .. code-block:: pycon
 
-    >>> from string import printable; from pprint import pprint
-    >>> json = recursive(none() | booleans() | floats() | text(printable),
-    ... lambda children: lists(children, 1) | dictionaries(text(printable), children, min_size=1))
+    >>> from string import printable
+    ... from pprint import pprint
+    >>> json = recursive(
+    ...     none() | booleans() | floats() | text(printable),
+    ...     lambda children: lists(children) | dictionaries(text(printable), children),
+    ... )
     >>> pprint(json.example())
     [[1.175494351e-38, ']', 1.9, True, False, '.M}Xl', ''], True]
     >>> pprint(json.example())
@@ -247,6 +254,7 @@ For example, the following gives you a list and an index into it:
     ...     xs = draw(lists(elements, min_size=1))
     ...     i = draw(integers(min_value=0, max_value=len(xs) - 1))
     ...     return (xs, i)
+    ...
 
 ``draw(s)`` is a function that should be thought of as returning ``s.example()``,
 except that the result is reproducible and will minimize correctly. The
@@ -324,7 +332,7 @@ strategies interactively. Rather than having to specify everything up front in
 This is similar to :func:`@composite <hypothesis.strategies.composite>`, but
 even more powerful as it allows you to mix test code with example generation.
 The downside of this power is that :func:`~hypothesis.strategies.data` is
-incompatible with explicit :func:`@example(...) <hypothesis.example>`\ s -
+incompatible with explicit :obj:`@example(...) <hypothesis.example>`\ s -
 and the mixed code is often harder to debug when something goes wrong.
 
 If you need values that are affected by previous draws but which *don't* depend

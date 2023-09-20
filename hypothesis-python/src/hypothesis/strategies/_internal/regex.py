@@ -1,22 +1,22 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import operator
 import re
-import sre_constants as sre
-import sre_parse
+
+try:  # pragma: no cover
+    import re._constants as sre
+    import re._parser as sre_parse
+except ImportError:  # Python < 3.11
+    import sre_constants as sre  # type: ignore
+    import sre_parse  # type: ignore
 
 from hypothesis import reject, strategies as st
 from hypothesis.internal.charmap import as_general_categories, categories
@@ -161,7 +161,7 @@ class CharactersBuilder:
             self._categories |= UNICODE_CATEGORIES - UNICODE_WORD_CATEGORIES
             self._blacklist_chars.add("_")
         else:
-            raise NotImplementedError("Unknown character category: %s" % category)
+            raise NotImplementedError(f"Unknown character category: {category}")
 
     def add_char(self, char):
         """Add given char to the whitelist."""
@@ -218,13 +218,18 @@ def base_regex_strategy(regex, parsed=None):
     )
 
 
-def regex_strategy(regex, fullmatch):
+def regex_strategy(regex, fullmatch, *, _temp_jsonschema_hack_no_end_newline=False):
     if not hasattr(regex, "pattern"):
         regex = re.compile(regex)
 
     is_unicode = isinstance(regex.pattern, str)
 
     parsed = sre_parse.parse(regex.pattern, flags=regex.flags)
+
+    if fullmatch:
+        if not parsed:
+            return st.just("" if is_unicode else b"")
+        return base_regex_strategy(regex, parsed).filter(regex.fullmatch)
 
     if not parsed:
         if is_unicode:
@@ -244,9 +249,7 @@ def regex_strategy(regex, fullmatch):
     right_pad = base_padding_strategy
     left_pad = base_padding_strategy
 
-    if fullmatch:
-        right_pad = empty
-    elif parsed[-1][0] == sre.AT:
+    if parsed[-1][0] == sre.AT:
         if parsed[-1][1] == sre.AT_END_STRING:
             right_pad = empty
         elif parsed[-1][1] == sre.AT_END:
@@ -256,9 +259,16 @@ def regex_strategy(regex, fullmatch):
                 )
             else:
                 right_pad = st.one_of(empty, newline)
-    if fullmatch:
-        left_pad = empty
-    elif parsed[0][0] == sre.AT:
+
+            # This will be removed when a regex-syntax-translation library exists.
+            # It's a pretty nasty hack, but means that we can match the semantics
+            # of JSONschema's compatible subset of ECMA regex, which is important
+            # for hypothesis-jsonschema and Schemathesis. See e.g.
+            # https://github.com/schemathesis/schemathesis/issues/1241
+            if _temp_jsonschema_hack_no_end_newline:
+                right_pad = empty
+
+    if parsed[0][0] == sre.AT:
         if parsed[0][1] == sre.AT_BEGINNING_STRING:
             left_pad = empty
         elif parsed[0][1] == sre.AT_BEGINNING:
@@ -414,7 +424,7 @@ def _strategy(codes, context, is_unicode):
                 else:
                     # Currently there are no known code points other than
                     # handled here. This code is just future proofing
-                    raise NotImplementedError("Unknown charset code: %s" % charset_code)
+                    raise NotImplementedError(f"Unknown charset code: {charset_code}")
             return builder.strategy
 
         elif code == sre.ANY:
@@ -488,4 +498,4 @@ def _strategy(codes, context, is_unicode):
         else:
             # Currently there are no known code points other than handled here.
             # This code is just future proofing
-            raise NotImplementedError("Unknown code point: %s" % repr(code))
+            raise NotImplementedError(f"Unknown code point: {code!r}")

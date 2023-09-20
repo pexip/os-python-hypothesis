@@ -1,20 +1,15 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
-import random
 from math import log
+from random import Random
 
 from hypothesis import (
     HealthCheck,
@@ -77,8 +72,6 @@ base_settings = settings(
 def test_avoids_zig_zag_trap(p):
     b, marker, lower_bound = p
 
-    random.seed(0)
-
     n_bits = 8 * (len(b) + 1)
 
     def test_function(data):
@@ -95,6 +88,7 @@ def test_avoids_zig_zag_trap(p):
         test_function,
         database_key=None,
         settings=settings(base_settings, phases=(Phase.generate, Phase.shrink)),
+        random=Random(0),
     )
 
     runner.cached_test_function(b + bytes([0]) + b + bytes([1]) + marker)

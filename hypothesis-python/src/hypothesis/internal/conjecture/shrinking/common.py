@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 """This module implements various useful common functions for shrinking tasks."""
 
@@ -41,9 +36,9 @@ class Shrinker:
         return len(self.__seen)
 
     def __repr__(self):
-        return "%s(%sinitial=%r, current=%r)" % (
+        return "{}({}initial={!r}, current={!r})".format(
             type(self).__name__,
-            "" if self.name is None else "%r, " % (self.name,),
+            "" if self.name is None else f"{self.name!r}, ",
             self.initial,
             self.current,
         )
@@ -116,14 +111,14 @@ class Shrinker:
         if not self.left_is_better(value, self.current):
             if value != self.current and (value == value):
                 self.debug(
-                    "Rejected %r as worse than self.current=%r" % (value, self.current)
+                    f"Rejected {value!r} as worse than self.current={self.current!r}"
                 )
             return False
         if value in self.__seen:
             return False
         self.__seen.add(value)
         if self.__predicate(value):
-            self.debug("shrinking to %r" % (value,))
+            self.debug(f"shrinking to {value!r}")
             self.changes += 1
             self.current = value
             return True

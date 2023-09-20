@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from functools import reduce
 from itertools import chain
@@ -21,6 +16,7 @@ import attr
 from hypothesis import strategies as st
 from hypothesis.errors import ResolutionFailed
 from hypothesis.internal.compat import get_type_hints
+from hypothesis.strategies._internal.core import BuildsStrategy
 from hypothesis.strategies._internal.types import is_a_type, type_sorting_key
 from hypothesis.utils.conventions import infer
 
@@ -34,15 +30,13 @@ def from_attrs(target, args, kwargs, to_infer):
     # We might make this strategy more efficient if we added a layer here that
     # retries drawing if validation fails, for improved composition.
     # The treatment of timezones in datetimes() provides a precedent.
-    return st.tuples(st.tuples(*args), st.fixed_dictionaries(kwargs)).map(
-        lambda value: target(*value[0], **value[1])
-    )
+    return BuildsStrategy(target, args, kwargs)
 
 
 def from_attrs_attribute(attrib, target):
     """Infer a strategy from the metadata on an attr.Attribute object."""
     # Try inferring from the default argument.  Note that this will only help if
-    # the user passed `infer` to builds() for this attribute, but in that case
+    # the user passed `...` to builds() for this attribute, but in that case
     # we use it as the minimal example.
     default = st.nothing()
     if isinstance(attrib.default, attr.Factory):
@@ -90,7 +84,7 @@ def from_attrs_attribute(attrib, target):
     if strat.is_empty:
         raise ResolutionFailed(
             "Cannot infer a strategy from the default, validator, type, or "
-            "converter for attribute=%r of class=%r" % (attrib, target)
+            f"converter for attribute={attrib!r} of class={target!r}"
         )
     return strat
 

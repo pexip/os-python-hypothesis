@@ -1,24 +1,23 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
+import threading
 from contextlib import contextmanager
 
-from hypothesis.errors import InvalidArgument
 from hypothesis.internal.lazyformat import lazyformat
 from hypothesis.internal.reflection import get_pretty_function_description
-from hypothesis.strategies._internal.strategies import OneOfStrategy, SearchStrategy
+from hypothesis.strategies._internal.strategies import (
+    OneOfStrategy,
+    SearchStrategy,
+    check_strategy,
+)
 
 
 class LimitReached(BaseException):
@@ -29,11 +28,26 @@ class LimitedStrategy(SearchStrategy):
     def __init__(self, strategy):
         super().__init__()
         self.base_strategy = strategy
-        self.marker = 0
-        self.currently_capped = False
+        self._threadlocal = threading.local()
+
+    @property
+    def marker(self):
+        return getattr(self._threadlocal, "marker", 0)
+
+    @marker.setter
+    def marker(self, value):
+        self._threadlocal.marker = value
+
+    @property
+    def currently_capped(self):
+        return getattr(self._threadlocal, "currently_capped", False)
+
+    @currently_capped.setter
+    def currently_capped(self, value):
+        self._threadlocal.currently_capped = value
 
     def __repr__(self):
-        return "LimitedStrategy(%r)" % (self.base_strategy,)
+        return f"LimitedStrategy({self.base_strategy!r})"
 
     def do_validate(self):
         self.base_strategy.validate()
@@ -47,13 +61,13 @@ class LimitedStrategy(SearchStrategy):
 
     @contextmanager
     def capped(self, max_templates):
-        assert not self.currently_capped
         try:
+            was_capped = self.currently_capped
             self.currently_capped = True
             self.marker = max_templates
             yield
         finally:
-            self.currently_capped = False
+            self.currently_capped = was_capped
 
 
 class RecursiveStrategy(SearchStrategy):
@@ -78,18 +92,11 @@ class RecursiveStrategy(SearchStrategy):
         return self._cached_repr
 
     def do_validate(self):
-        if not isinstance(self.base, SearchStrategy):
-            raise InvalidArgument(
-                "Expected base to be SearchStrategy but got %r" % (self.base,)
-            )
+        check_strategy(self.base, "base")
         extended = self.extend(self.limited_base)
-        if not isinstance(extended, SearchStrategy):
-            raise InvalidArgument(
-                "Expected extend(%r) to be a SearchStrategy but got %r"
-                % (self.limited_base, extended)
-            )
+        check_strategy(extended, f"extend({self.limited_base!r})")
         self.limited_base.validate()
-        self.extend(self.limited_base).validate()
+        extended.validate()
 
     def do_draw(self, data):
         count = 0

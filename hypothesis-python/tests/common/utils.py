@@ -1,31 +1,53 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import contextlib
 import sys
-import traceback
 from io import StringIO
+from types import SimpleNamespace
 
-from hypothesis._settings import Phase
+from hypothesis import Phase, settings
 from hypothesis.errors import HypothesisDeprecationWarning
+from hypothesis.internal.entropy import deterministic_PRNG
+from hypothesis.internal.floats import next_down
 from hypothesis.internal.reflection import proxies
 from hypothesis.reporting import default, with_reporter
 from hypothesis.strategies._internal.core import from_type, register_type_strategy
 from hypothesis.strategies._internal.types import _global_type_lookup
 
-no_shrink = tuple(set(Phase) - {Phase.shrink})
+try:
+    from pytest import raises
+except ModuleNotFoundError:
+    # We are currently running under a test framework other than pytest,
+    # so use our own simplified implementation of `pytest.raises`.
+
+    @contextlib.contextmanager
+    def raises(expected_exception, match=None):
+        err = SimpleNamespace(value=None)
+        try:
+            yield err
+        except expected_exception as e:
+            err.value = e
+            if match is not None:
+                import re
+
+                assert re.search(match, e.args[0])
+        else:
+            # This needs to be outside the try/except, so that the helper doesn't
+            # trick itself into thinking that an AssertionError was thrown.
+            raise AssertionError(
+                f"Expected to raise an exception ({expected_exception!r}) but didn't"
+            ) from None
+
+
+no_shrink = tuple(set(settings.default.phases) - {Phase.shrink})
 
 
 def flaky(max_runs, min_passes):
@@ -67,24 +89,17 @@ class ExcInfo:
     pass
 
 
-@contextlib.contextmanager
-def raises(exctype):
-    e = ExcInfo()
-    try:
-        yield e
-        assert False, "Expected to raise an exception but didn't"
-    except exctype as err:
-        traceback.print_exc()
-        e.value = err
-        return
-
-
-def fails_with(e):
+def fails_with(e, *, match=None):
     def accepts(f):
         @proxies(f)
         def inverted_test(*arguments, **kwargs):
-            with raises(e):
-                f(*arguments, **kwargs)
+            # Most of these expected-failure tests are non-deterministic, so
+            # we rig the PRNG to avoid occasional flakiness. We do this outside
+            # the `raises` context manager so that any problems in rigging the
+            # PRNG don't accidentally count as the expected failure.
+            with deterministic_PRNG():
+                with raises(e, match=match):
+                    f(*arguments, **kwargs)
 
         return inverted_test
 
@@ -110,8 +125,7 @@ def validate_deprecation():
         warnings.simplefilter("error", HypothesisDeprecationWarning)
         if not any(e.category == HypothesisDeprecationWarning for e in w):
             raise NotDeprecated(
-                "Expected to get a deprecation warning but got %r"
-                % ([e.category for e in w],)
+                f"Expected a deprecation warning but got {[e.category for e in w]!r}"
             )
 
 
@@ -154,18 +168,26 @@ def counts_calls(func):
 def assert_output_contains_failure(output, test, **kwargs):
     assert test.__name__ + "(" in output
     for k, v in kwargs.items():
-        assert ("%s=%r" % (k, v)) in output
+        assert f"{k}={v!r}" in output, (f"{k}={v!r}", output)
 
 
 def assert_falsifying_output(
     test, example_type="Falsifying", expected_exception=AssertionError, **kwargs
 ):
     with capture_out() as out:
-        with raises(expected_exception):
+        if expected_exception is None:
+            # Some tests want to check the output of non-failing runs.
             test()
+            msg = ""
+        else:
+            with raises(expected_exception) as exc_info:
+                test()
+            notes = "\n".join(getattr(exc_info.value, "__notes__", []))
+            msg = str(exc_info.value) + "\n" + notes
 
-    assert "%s example:" % (example_type,)
-    assert_output_contains_failure(out.getvalue(), test, **kwargs)
+    output = out.getvalue() + msg
+    assert f"{example_type} example:" in output
+    assert_output_contains_failure(output, test, **kwargs)
 
 
 @contextlib.contextmanager
@@ -184,3 +206,11 @@ def temp_registered(type_, strat_or_factory):
         from_type.__clear_cache()
         if prev is not None:
             register_type_strategy(type_, prev)
+
+
+# Specifies whether we can represent subnormal floating point numbers.
+# IEE-754 requires subnormal support, but it's often disabled anyway by unsafe
+# compiler options like `-ffast-math`.  On most hardware that's even a global
+# config option, so *linking against* something built this way can break us.
+# Everything is terrible
+PYTHON_FTZ = next_down(sys.float_info.min) == 0.0

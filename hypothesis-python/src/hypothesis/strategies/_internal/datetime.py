@@ -1,55 +1,39 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import datetime as dt
 import os.path
 from calendar import monthrange
 from functools import lru_cache
+from importlib import resources
 from typing import Optional
 
 from hypothesis.errors import InvalidArgument
 from hypothesis.internal.conjecture import utils
 from hypothesis.internal.validation import check_type, check_valid_interval
-from hypothesis.strategies._internal.core import (
-    defines_strategy,
-    deprecated_posargs,
-    just,
-    none,
-    sampled_from,
-)
+from hypothesis.strategies._internal.core import sampled_from
+from hypothesis.strategies._internal.misc import just, none
 from hypothesis.strategies._internal.strategies import SearchStrategy
+from hypothesis.strategies._internal.utils import defines_strategy
 
-# These standard-library modules are required for the timezones() and
-# timezone_keys() strategies, but not present in older versions of Python.
-# We therefore try to import them here, but only raise errors recommending
-# `pip install hypothesis[zoneinfo]` to install the backports (if needed)
-# when those strategies are actually used.
-try:
-    import importlib.resources as importlib_resources
-except ImportError:
-    try:
-        import importlib_resources  # type: ignore
-    except ImportError:
-        importlib_resources = None  # type: ignore
+# The zoneinfo module, required for the timezones() and timezone_keys()
+# strategies, is new in Python 3.9 and the backport might be missing.
 try:
     import zoneinfo
 except ImportError:
     try:
         from backports import zoneinfo  # type: ignore
     except ImportError:
-        zoneinfo = None
+        # We raise an error recommending `pip install hypothesis[zoneinfo]`
+        # when timezones() or timezone_keys() strategies are actually used.
+        zoneinfo = None  # type: ignore
 
 DATENAMES = ("year", "month", "day")
 TIMENAMES = ("hour", "minute", "second", "microsecond")
@@ -101,6 +85,16 @@ def datetime_does_not_exist(value):
         # meaningless before ~1900 and subject to a lot of change by
         # 9999, so it should be a very small fraction of possible values.
         return True
+
+    if (
+        value.tzinfo is not roundtrip.tzinfo
+        and value.utcoffset() != roundtrip.utcoffset()
+    ):
+        # This only ever occurs during imaginary (i.e. nonexistent) datetimes,
+        # and only for pytz timezones which do not follow PEP-495 semantics.
+        # (may exclude a few other edge cases, but you should use zoneinfo anyway)
+        return True
+
     assert value.tzinfo is roundtrip.tzinfo, "so only the naive portions are compared"
     return value != roundtrip
 
@@ -176,7 +170,6 @@ class DatetimeStrategy(SearchStrategy):
 
 
 @defines_strategy(force_reusable_values=True)
-@deprecated_posargs
 def datetimes(
     min_value: dt.datetime = dt.datetime.min,
     max_value: dt.datetime = dt.datetime.max,
@@ -193,17 +186,19 @@ def datetimes(
 
     ``timezones`` must be a strategy that generates either ``None``, for naive
     datetimes, or :class:`~python:datetime.tzinfo` objects for 'aware' datetimes.
-    You can construct your own, though we recommend using the :pypi:`dateutil
-    <python-dateutil>` package and :func:`hypothesis.extra.dateutil.timezones`
-    strategy, and also provide :func:`hypothesis.extra.pytz.timezones`.
+    You can construct your own, though we recommend using one of these built-in
+    strategies:
+
+    * with Python 3.9 or newer or :pypi:`backports.zoneinfo`:
+      :func:`hypothesis.strategies.timezones`;
+    * with :pypi:`dateutil <python-dateutil>`:
+      :func:`hypothesis.extra.dateutil.timezones`; or
+    * with :pypi:`pytz`: :func:`hypothesis.extra.pytz.timezones`.
 
     You may pass ``allow_imaginary=False`` to filter out "imaginary" datetimes
     which did not (or will not) occur due to daylight savings, leap seconds,
     timezone and calendar adjustments, etc.  Imaginary datetimes are allowed
     by default, because malformed timestamps are a common source of bugs.
-    Note that because :pypi:`pytz` predates :pep:`495`, this does not work
-    correctly with timezones that use a negative DST offset (such as
-    ``"Europe/Dublin"``).
 
     Examples from this strategy shrink towards midnight on January 1st 2000,
     local time.
@@ -221,14 +216,14 @@ def datetimes(
     check_type(dt.datetime, min_value, "min_value")
     check_type(dt.datetime, max_value, "max_value")
     if min_value.tzinfo is not None:
-        raise InvalidArgument("min_value=%r must not have tzinfo" % (min_value,))
+        raise InvalidArgument(f"min_value={min_value!r} must not have tzinfo")
     if max_value.tzinfo is not None:
-        raise InvalidArgument("max_value=%r must not have tzinfo" % (max_value,))
+        raise InvalidArgument(f"max_value={max_value!r} must not have tzinfo")
     check_valid_interval(min_value, max_value, "min_value", "max_value")
     if not isinstance(timezones, SearchStrategy):
         raise InvalidArgument(
-            "timezones=%r must be a SearchStrategy that can provide tzinfo "
-            "for datetimes (either None or dt.tzinfo objects)" % (timezones,)
+            f"timezones={timezones!r} must be a SearchStrategy that can "
+            "provide tzinfo for datetimes (either None or dt.tzinfo objects)"
         )
     return DatetimeStrategy(min_value, max_value, timezones, allow_imaginary)
 
@@ -246,7 +241,6 @@ class TimeStrategy(SearchStrategy):
 
 
 @defines_strategy(force_reusable_values=True)
-@deprecated_posargs
 def times(
     min_value: dt.time = dt.time.min,
     max_value: dt.time = dt.time.max,
@@ -265,9 +259,9 @@ def times(
     check_type(dt.time, min_value, "min_value")
     check_type(dt.time, max_value, "max_value")
     if min_value.tzinfo is not None:
-        raise InvalidArgument("min_value=%r must not have tzinfo" % min_value)
+        raise InvalidArgument(f"min_value={min_value!r} must not have tzinfo")
     if max_value.tzinfo is not None:
-        raise InvalidArgument("max_value=%r must not have tzinfo" % max_value)
+        raise InvalidArgument(f"max_value={max_value!r} must not have tzinfo")
     check_valid_interval(min_value, max_value, "min_value", "max_value")
     return TimeStrategy(min_value, max_value, timezones)
 
@@ -356,15 +350,15 @@ def _valid_key_cacheable(tzpath, key):
         # This branch is only taken for names which are known to zoneinfo
         # but not present on the filesystem, i.e. on Windows with tzdata,
         # and so is never executed by our coverage tests.
-        if importlib_resources is None:
-            raise ImportError(
-                "The importlib_resources module is required, but could not be "
-                "imported.  Run `pip install hypothesis[zoneinfo]` and try again."
-            )
         *package_loc, resource_name = key.split("/")
         package = "tzdata.zoneinfo." + ".".join(package_loc)
         try:
-            return importlib_resources.is_resource(package, resource_name)
+            try:
+                traversable = resources.files(package) / resource_name
+                return traversable.exists()
+            except (AttributeError, ValueError):
+                # .files() was added in Python 3.9
+                return resources.is_resource(package, resource_name)
         except ModuleNotFoundError:
             return False
 
@@ -395,8 +389,10 @@ def timezone_keys(
     .. note::
 
         The :mod:`python:zoneinfo` module is new in Python 3.9, so you will need
-        to install the :pypi:`backports.zoneinfo` module on earlier versions, and
-        the :pypi:`importlib_resources` backport on Python 3.6.
+        to install the :pypi:`backports.zoneinfo` module on earlier versions.
+
+        `On Windows, you will also need to install the tzdata package
+        <https://docs.python.org/3/library/zoneinfo.html#data-sources>`__.
 
         ``pip install hypothesis[zoneinfo]`` will install these conditional
         dependencies if and only if they are needed.
@@ -404,7 +400,8 @@ def timezone_keys(
     On Windows, you may need to access IANA timezone data via the :pypi:`tzdata`
     package.  For non-IANA timezones, such as Windows-native names or GNU TZ
     strings, we recommend using :func:`~hypothesis.strategies.sampled_from` with
-    the :pypi:`dateutil` package, e.g. :meth:`dateutil:dateutil.tz.tzwin.list`.
+    the :pypi:`dateutil <python-dateutil>` package, e.g.
+    :meth:`dateutil:dateutil.tz.tzwin.list`.
     """
     # check_type(bool, allow_alias, "allow_alias")
     # check_type(bool, allow_deprecated, "allow_deprecated")
@@ -452,8 +449,10 @@ def timezones(*, no_cache: bool = False) -> SearchStrategy["zoneinfo.ZoneInfo"]:
     .. note::
 
         The :mod:`python:zoneinfo` module is new in Python 3.9, so you will need
-        to install the :pypi:`backports.zoneinfo` module on earlier versions, and
-        the :pypi:`importlib_resources` backport on Python 3.6.
+        to install the :pypi:`backports.zoneinfo` module on earlier versions.
+
+        `On Windows, you will also need to install the tzdata package
+        <https://docs.python.org/3/library/zoneinfo.html#data-sources>`__.
 
         ``pip install hypothesis[zoneinfo]`` will install these conditional
         dependencies if and only if they are needed.

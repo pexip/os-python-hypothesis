@@ -1,22 +1,20 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
+
+import unittest
 
 import pytest
 from _pytest.outcomes import Failed, Skipped
 
-from hypothesis import find, given, reject, settings, strategies as s
+from hypothesis import Phase, example, find, given, reject, settings, strategies as s
+from hypothesis.database import InMemoryExampleDatabase
 from hypothesis.errors import InvalidArgument, NoSuchExample, Unsatisfiable
 
 
@@ -74,7 +72,7 @@ def test_given_shrinks_pytest_helper_errors():
     def inner(x):
         final_value[0] = x
         if x > 100:
-            pytest.fail("x=%r is too big!" % x)
+            pytest.fail(f"x={x!r} is too big!")
 
     with pytest.raises(Failed):
         inner()
@@ -89,7 +87,7 @@ def test_pytest_skip_skips_shrinking():
     def inner(x):
         values.append(x)
         if x > 100:
-            pytest.skip("x=%r is too big!" % x)
+            pytest.skip(f"x={x!r} is too big!")
 
     with pytest.raises(Skipped):
         inner()
@@ -116,3 +114,32 @@ def test_validates_strategies_for_test_method():
     instance = TestStrategyValidation()
     with pytest.raises(InvalidArgument):
         instance.test_method_with_bad_strategy()
+
+
+@example(1)
+@given(s.integers())
+@settings(phases=[Phase.target, Phase.shrink, Phase.explain])
+def no_phases(_):
+    raise Exception
+
+
+@given(s.integers())
+@settings(phases=[Phase.explicit])
+def no_explicit(_):
+    raise Exception
+
+
+@given(s.integers())
+@settings(phases=[Phase.reuse], database=InMemoryExampleDatabase())
+def empty_db(_):
+    raise Exception
+
+
+@pytest.mark.parametrize(
+    "test_fn",
+    [no_phases, no_explicit, empty_db],
+    ids=lambda t: t.__name__,
+)
+def test_non_executed_tests_raise_skipped(test_fn):
+    with pytest.raises(unittest.SkipTest):
+        test_fn()

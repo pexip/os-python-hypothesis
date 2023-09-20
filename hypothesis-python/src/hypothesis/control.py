@@ -1,36 +1,33 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import math
-import traceback
-from typing import Any, Union
+from collections import defaultdict
+from typing import NoReturn, Union
 
 from hypothesis import Verbosity, settings
-from hypothesis.errors import CleanupFailed, InvalidArgument, UnsatisfiedAssumption
+from hypothesis.errors import InvalidArgument, UnsatisfiedAssumption
+from hypothesis.internal.compat import BaseExceptionGroup
 from hypothesis.internal.conjecture.data import ConjectureData
-from hypothesis.internal.reflection import deprecated_posargs
+from hypothesis.internal.reflection import get_pretty_function_description
 from hypothesis.internal.validation import check_type
 from hypothesis.reporting import report, verbose_report
 from hypothesis.utils.dynamicvariables import DynamicVariable
+from hypothesis.vendor.pretty import IDKey
 
 
-def reject():
+def reject() -> NoReturn:
     raise UnsatisfiedAssumption()
 
 
-def assume(condition: Any) -> bool:
+def assume(condition: object) -> bool:
     """Calling ``assume`` is like an :ref:`assert <python:assert>` that marks
     the example as bad, rather than failing the test.
 
@@ -45,7 +42,19 @@ def assume(condition: Any) -> bool:
 _current_build_context = DynamicVariable(None)
 
 
-def current_build_context():
+def currently_in_test_context() -> bool:
+    """Return ``True`` if the calling code is currently running inside an
+    :func:`@given <hypothesis.given>` or :doc:`stateful <stateful>` test,
+    ``False`` otherwise.
+
+    This is useful for third-party integrations and assertion helpers which
+    may be called from traditional or property-based tests, but can only use
+    :func:`~hypothesis.assume` or :func:`~hypothesis.target` in the latter case.
+    """
+    return _current_build_context.value is not None
+
+
+def current_build_context() -> "BuildContext":
     context = _current_build_context.value
     if context is None:
         raise InvalidArgument("No build context registered")
@@ -60,6 +69,16 @@ class BuildContext:
         self.is_final = is_final
         self.close_on_capture = close_on_capture
         self.close_on_del = False
+        # Use defaultdict(list) here to handle the possibility of having multiple
+        # functions registered for the same object (due to caching, small ints, etc).
+        # The printer will discard duplicates which return different representations.
+        self.known_object_printers = defaultdict(list)
+
+    def record_call(self, obj, func, a, kw):
+        name = get_pretty_function_description(func)
+        self.known_object_printers[IDKey(obj)].append(
+            lambda obj, p, cycle: p.text("<...>") if cycle else p.repr_call(name, a, kw)
+        )
 
     def __enter__(self):
         self.assign_variable = _current_build_context.with_value(self)
@@ -68,18 +87,16 @@ class BuildContext:
 
     def __exit__(self, exc_type, exc_value, tb):
         self.assign_variable.__exit__(exc_type, exc_value, tb)
-        if self.close() and exc_type is None:
-            raise CleanupFailed()
-
-    def close(self):
-        any_failed = False
+        errors = []
         for task in self.tasks:
             try:
                 task()
-            except BaseException:
-                any_failed = True
-                report(traceback.format_exc())
-        return any_failed
+            except BaseException as err:
+                errors.append(err)
+        if errors:
+            if len(errors) == 1:
+                raise errors[0] from exc_value
+            raise BaseExceptionGroup("Cleanup failed", errors) from exc_value
 
 
 def cleanup(teardown):
@@ -105,7 +122,7 @@ def should_note():
 
 
 def note(value: str) -> None:
-    """Report this value in the final execution."""
+    """Report this value for the minimal failing example."""
     if should_note():
         report(value)
 
@@ -124,8 +141,7 @@ def event(value: str) -> None:
     context.data.note_event(value)
 
 
-@deprecated_posargs
-def target(observation: Union[int, float], *, label: str = "") -> None:
+def target(observation: Union[int, float], *, label: str = "") -> Union[int, float]:
     """Calling this function with an ``int`` or ``float`` observation gives it feedback
     with which to guide our search for inputs that will cause an error, in
     addition to all the usual heuristics.  Observations must always be finite.
@@ -155,11 +171,6 @@ def target(observation: Union[int, float], *, label: str = "") -> None:
         and immediately obvious by around ten thousand examples
         *per label* used by your test.
 
-    .. note::
-        ``hypothesis.target`` is considered experimental, and may be radically
-        changed or even removed in a future version.  If you find it useful,
-        please let us know so we can share and build on that success!
-
     :ref:`statistics` include the best score seen for each label,
     which can help avoid `the threshold problem
     <https://hypothesis.works/articles/threshold-problem/>`__ when the minimal
@@ -167,18 +178,23 @@ def target(observation: Union[int, float], *, label: str = "") -> None:
     """
     check_type((int, float), observation, "observation")
     if not math.isfinite(observation):
-        raise InvalidArgument("observation=%r must be a finite float." % observation)
+        raise InvalidArgument(f"observation={observation!r} must be a finite float.")
     check_type(str, label, "label")
 
     context = _current_build_context.value
     if context is None:
-        raise InvalidArgument("Calling target() outside of a test is invalid.")
-    verbose_report("Saw target(observation=%r, label=%r)" % (observation, label))
+        raise InvalidArgument(
+            "Calling target() outside of a test is invalid.  "
+            "Consider guarding this call with `if currently_in_test_context(): ...`"
+        )
+    verbose_report(f"Saw target(observation={observation!r}, label={label!r})")
 
     if label in context.data.target_observations:
         raise InvalidArgument(
-            "Calling target(%r, label=%r) would overwrite target(%r, label=%r)"
-            % (observation, label, context.data.target_observations[label], label)
+            f"Calling target({observation!r}, label={label!r}) would overwrite "
+            f"target({context.data.target_observations[label]!r}, label={label!r})"
         )
     else:
         context.data.target_observations[label] = observation
+
+    return observation

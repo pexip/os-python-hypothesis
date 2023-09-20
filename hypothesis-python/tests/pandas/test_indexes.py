@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import numpy as np
 import pandas
@@ -20,6 +15,7 @@ import pytest
 from hypothesis import HealthCheck, given, reject, settings, strategies as st
 from hypothesis.errors import Unsatisfiable
 from hypothesis.extra import numpy as npst, pandas as pdst
+
 from tests.pandas.helpers import supported_by_pandas
 
 
@@ -28,7 +24,7 @@ def test_gets_right_dtype_for_empty_indices(ix):
     assert ix.dtype == np.dtype("int64")
 
 
-@given(pdst.indexes(elements=st.integers(0, 2 ** 63 - 1), max_size=0))
+@given(pdst.indexes(elements=st.integers(0, 2**63 - 1), max_size=0))
 def test_gets_right_dtype_for_empty_indices_with_elements(ix):
     assert ix.dtype == np.dtype("int64")
 
@@ -50,8 +46,13 @@ def test_unique_indexes_of_many_small_values(ix):
     assert len(set(ix)) == len(ix)
 
 
+@given(pdst.indexes(dtype="int8", name=st.just("test_name")))
+def test_name_passed_on_indexes(s):
+    assert s.name == "test_name"
+
+
 # Sizes that fit into an int64 without overflow
-range_sizes = st.integers(0, 2 ** 63 - 1)
+range_sizes = st.integers(0, 2**63 - 1)
 
 
 @given(range_sizes, range_sizes | st.none(), st.data())
@@ -59,6 +60,11 @@ def test_arbitrary_range_index(i, j, data):
     if j is not None:
         i, j = sorted((i, j))
     data.draw(pdst.range_indexes(i, j))
+
+
+@given(pdst.range_indexes(name=st.just("test_name")))
+def test_name_passed_on_range_indexes(s):
+    assert s.name == "test_name"
 
 
 @given(pdst.range_indexes())
