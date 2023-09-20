@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import abc
 import binascii
@@ -19,7 +14,7 @@ import os
 import sys
 import warnings
 from hashlib import sha384
-from typing import Iterable
+from typing import Dict, Iterable
 
 from hypothesis.configuration import mkdir_p, storage_directory
 from hypothesis.errors import HypothesisException, HypothesisWarning
@@ -61,7 +56,7 @@ def _db_for_path(path=None):
                 HypothesisWarning(
                     "The database setting is not configured, and the default "
                     "location is unusable - falling back to an in-memory "
-                    "database for this session.  path=%r" % (path,)
+                    f"database for this session.  path={path!r}"
                 )
             )
             return InMemoryExampleDatabase()
@@ -86,7 +81,7 @@ class _EDMeta(abc.ABCMeta):
 # This code only runs if Sphinx has already been imported; and it would live in our
 # docs/conf.py except that we would also like it to work for anyone documenting
 # downstream ExampleDatabase subclasses too.
-if "sphinx" in sys.modules:  # pragma: no cover
+if "sphinx" in sys.modules:
     try:
         from sphinx.ext.autodoc import _METACLASS_CALL_BLACKLIST
 
@@ -108,12 +103,12 @@ class ExampleDatabase(metaclass=_EDMeta):
 
         If this value is already present for this key, silently do nothing.
         """
-        raise NotImplementedError("%s.save" % (type(self).__name__))
+        raise NotImplementedError(f"{type(self).__name__}.save")
 
     @abc.abstractmethod
     def fetch(self, key: bytes) -> Iterable[bytes]:
         """Return an iterable over all values matching this key."""
-        raise NotImplementedError("%s.fetch" % (type(self).__name__))
+        raise NotImplementedError(f"{type(self).__name__}.fetch")
 
     @abc.abstractmethod
     def delete(self, key: bytes, value: bytes) -> None:
@@ -121,7 +116,7 @@ class ExampleDatabase(metaclass=_EDMeta):
 
         If this value is not present, silently do nothing.
         """
-        raise NotImplementedError("%s.delete" % (type(self).__name__))
+        raise NotImplementedError(f"{type(self).__name__}.delete")
 
     def move(self, src: bytes, dest: bytes, value: bytes) -> None:
         """Move ``value`` from key ``src`` to key ``dest``. Equivalent to
@@ -150,7 +145,7 @@ class InMemoryExampleDatabase(ExampleDatabase):
         self.data = {}
 
     def __repr__(self) -> str:
-        return "InMemoryExampleDatabase(%r)" % (self.data,)
+        return f"InMemoryExampleDatabase({self.data!r})"
 
     def fetch(self, key: bytes) -> Iterable[bytes]:
         yield from self.data.get(key, ())
@@ -187,10 +182,10 @@ class DirectoryBasedExampleDatabase(ExampleDatabase):
 
     def __init__(self, path: str) -> None:
         self.path = path
-        self.keypaths = {}  # type: dict
+        self.keypaths: Dict[str, str] = {}
 
     def __repr__(self) -> str:
-        return "DirectoryBasedExampleDatabase(%r)" % (self.path,)
+        return f"DirectoryBasedExampleDatabase({self.path!r})"
 
     def _key_path(self, key):
         try:

@@ -1,29 +1,26 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import os
 
 import pytest
 
 import hypothesis
+from hypothesis import errors
 from hypothesis.internal import escalation as esc
+from hypothesis.internal.compat import BaseExceptionGroup
 
 
 def test_does_not_escalate_errors_in_non_hypothesis_file():
     try:
-        assert False
+        raise AssertionError
     except AssertionError:
         esc.escalate_hypothesis_internal_error()
 
@@ -33,7 +30,7 @@ def test_does_escalate_errors_in_hypothesis_file(monkeypatch):
 
     with pytest.raises(AssertionError):
         try:
-            assert False
+            raise AssertionError
         except AssertionError:
             esc.escalate_hypothesis_internal_error()
 
@@ -43,7 +40,7 @@ def test_does_not_escalate_errors_in_hypothesis_file_if_disabled(monkeypatch):
     monkeypatch.setattr(esc, "PREVENT_ESCALATION", True)
 
     try:
-        assert False
+        raise AssertionError
     except AssertionError:
         esc.escalate_hypothesis_internal_error()
 
@@ -67,3 +64,13 @@ def test_is_hypothesis_file_not_confused_by_prefix(monkeypatch):
 @pytest.mark.parametrize("fname", ["", "<ipython-input-18-f7c304bea5eb>"])
 def test_is_hypothesis_file_does_not_error_on_invalid_paths_issue_2319(fname):
     assert not esc.is_hypothesis_file(fname)
+
+
+def test_multiplefailures_deprecation():
+    with pytest.warns(errors.HypothesisDeprecationWarning):
+        exc = errors.MultipleFailures
+    assert exc is BaseExceptionGroup
+
+
+def test_handles_null_traceback():
+    esc.get_interesting_origin(Exception())

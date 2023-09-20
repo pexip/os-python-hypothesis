@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import sys
 from functools import reduce
@@ -20,9 +15,18 @@ from itertools import zip_longest
 import numpy as np
 import pytest
 
-from hypothesis import HealthCheck, assume, given, note, settings, strategies as st
-from hypothesis.errors import InvalidArgument, Unsatisfiable
+from hypothesis import (
+    HealthCheck,
+    assume,
+    given,
+    note,
+    settings,
+    strategies as st,
+    target,
+)
+from hypothesis.errors import InvalidArgument, UnsatisfiedAssumption
 from hypothesis.extra import numpy as nps
+
 from tests.common.debug import find_any, minimal
 from tests.common.utils import fails_with, flaky
 
@@ -66,8 +70,9 @@ def test_can_minimize_large_arrays():
 
 
 @flaky(max_runs=50, min_passes=1)
+@np.errstate(over="ignore", invalid="ignore")
 def test_can_minimize_float_arrays():
-    x = minimal(nps.arrays(float, 50), lambda t: t.sum() >= 1.0)
+    x = minimal(nps.arrays(float, 50), lambda t: np.nansum(t) >= 1.0)
     assert x.sum() in (1, 50)
 
 
@@ -249,7 +254,7 @@ def test_array_values_are_unique(arr):
 
 def test_cannot_generate_unique_array_of_too_many_elements():
     strat = nps.arrays(dtype=int, elements=st.integers(0, 5), shape=10, unique=True)
-    with pytest.raises(Unsatisfiable):
+    with pytest.raises(InvalidArgument):
         strat.example()
 
 
@@ -270,6 +275,23 @@ def test_array_values_are_unique_high_collision(arr):
 def test_generates_all_values_for_unique_array(arr):
     # Ensures that the "reject already-seen element" branch is covered
     assert len(set(arr)) == len(arr)
+
+
+@given(nps.arrays(dtype="int8", shape=255, unique=True))
+def test_efficiently_generates_all_unique_array(arr):
+    # Avoids the birthday paradox with UniqueSampledListStrategy
+    assert len(set(arr)) == len(arr)
+
+
+@given(st.data(), st.integers(-100, 100), st.integers(1, 100))
+def test_array_element_rewriting(data, start, size):
+    arr = nps.arrays(
+        dtype=np.dtype("int64"),
+        shape=size,
+        elements=st.integers(start, start + size - 1),
+        unique=True,
+    )
+    assert set(data.draw(arr)) == set(range(start, start + size))
 
 
 def test_may_fill_with_nan_when_unique_is_set():
@@ -318,8 +340,12 @@ def test_may_not_fill_with_non_nan_when_unique_is_set_and_type_is_not_number(arr
     pass
 
 
+np_version = tuple(int(x) for x in np.__version__.split(".")[:2])
+
+
 @pytest.mark.parametrize("fill", [False, True])
-@fails_with(InvalidArgument)
+# Overflowing elements deprecated upstream in Numpy 1.24 :-)
+@fails_with(InvalidArgument if np_version < (1, 24) else DeprecationWarning)
 @given(st.data())
 def test_overflowing_integers_are_deprecated(fill, data):
     kw = {"elements": st.just(300)}
@@ -334,10 +360,10 @@ def test_overflowing_integers_are_deprecated(fill, data):
     "dtype,strat",
     [
         ("float16", st.floats(min_value=65520, allow_infinity=False)),
-        ("float32", st.floats(min_value=10 ** 40, allow_infinity=False)),
+        ("float32", st.floats(min_value=10**40, allow_infinity=False)),
         (
             "complex64",
-            st.complex_numbers(min_magnitude=10 ** 300, allow_infinity=False),
+            st.complex_numbers(min_magnitude=10**300, allow_infinity=False),
         ),
         ("U1", st.text(min_size=2, max_size=2)),
         ("S1", st.binary(min_size=2, max_size=2)),
@@ -350,7 +376,12 @@ def test_unrepresentable_elements_are_deprecated(fill, dtype, strat, data):
         kw = {"elements": st.nothing(), "fill": strat}
     else:
         kw = {"elements": strat}
-    arr = data.draw(nps.arrays(dtype=dtype, shape=(1,), **kw))
+    try:
+        arr = data.draw(nps.arrays(dtype=dtype, shape=(1,), **kw))
+    except RuntimeWarning:
+        assert np_version >= (1, 24), "New overflow-on-cast detection"
+        raise InvalidArgument("so the test passes") from None
+
     try:
         # This is a float or complex number, and has overflowed to infinity,
         # triggering our deprecation for overflow.
@@ -405,7 +436,7 @@ def test_unique_array_with_fill_can_use_all_elements(arr):
 
 @given(nps.arrays(dtype="uint8", shape=25, unique=True, fill=st.nothing()))
 def test_unique_array_without_fill(arr):
-    # This test covers the collision-related branchs for fully dense unique arrays.
+    # This test covers the collision-related branches for fully dense unique arrays.
     # Choosing 25 of 256 possible elements means we're almost certain to see colisions
     # thanks to the 'birthday paradox', but finding unique elemennts is still easy.
     assume(len(set(arr)) == arr.size)
@@ -483,8 +514,7 @@ def test_broadcastable_shape_bounds_are_satisfied(shape, data):
             label="bshape",
         )
     except InvalidArgument:
-        assume(False)
-        assert False, "unreachable"
+        raise UnsatisfiedAssumption from None
 
     if max_dims is None:
         max_dims = max(len(shape), min_dims) + 2
@@ -523,8 +553,7 @@ def test_mutually_broadcastable_shape_bounds_are_satisfied(
             label="shapes, result",
         )
     except InvalidArgument:
-        assume(False)
-        assert False, "unreachable"
+        raise UnsatisfiedAssumption from None
 
     if max_dims is None:
         max_dims = max(len(base_shape), min_dims) + 2
@@ -567,7 +596,7 @@ def _broadcast_two_shapes(shape_a: nps.Shape, shape_b: nps.Shape) -> nps.Shape:
     for a, b in zip_longest(reversed(shape_a), reversed(shape_b), fillvalue=1):
         if a != b and (a != 1) and (b != 1):
             raise ValueError(
-                "shapes %r and %r are not broadcast-compatible" % (shape_a, shape_b)
+                f"shapes {shape_a!r} and {shape_b!r} are not broadcast-compatible"
             )
         result.append(a if a != 1 else b)
     return tuple(reversed(result))
@@ -578,7 +607,7 @@ def _broadcast_shapes(*shapes):
     input shapes together.
 
     Raises ValueError if the shapes are not broadcast-compatible"""
-    assert len(shapes)
+    assert shapes, "Must pass >=1 shapes to broadcast"
     return reduce(_broadcast_two_shapes, shapes, ())
 
 
@@ -681,30 +710,6 @@ def test_mutually_broadcastable_shape_can_broadcast(
     assert result == _broadcast_shapes(base_shape, *shapes)
 
 
-@settings(deadline=None, max_examples=10)
-@given(min_dims=st.integers(0, 32), shape=ANY_SHAPE, data=st.data())
-def test_minimize_broadcastable_shape(min_dims, shape, data):
-    # Ensure aligned dimensions of broadcastable shape minimizes to `(1,) * min_dims`
-    max_dims = data.draw(st.none() | st.integers(min_dims, 32), label="max_dims")
-    min_side, max_side = _draw_valid_bounds(data, shape, max_dims, permit_none=False)
-    smallest = minimal(
-        nps.broadcastable_shapes(
-            shape,
-            min_side=min_side,
-            max_side=max_side,
-            min_dims=min_dims,
-            max_dims=max_dims,
-        )
-    )
-    note(f"(smallest): {smallest}")
-    n_leading = max(len(smallest) - len(shape), 0)
-    n_aligned = max(len(smallest) - n_leading, 0)
-    expected = [min_side] * n_leading + [
-        1 if min_side <= 1 <= max_side else i for i in shape[len(shape) - n_aligned :]
-    ]
-    assert tuple(expected) == smallest
-
-
 @settings(deadline=None, max_examples=50)
 @given(
     num_shapes=st.integers(1, 3),
@@ -723,7 +728,7 @@ def test_minimize_mutually_broadcastable_shape(num_shapes, min_dims, base_shape,
         # shrinking gets a little bit hairy when we have empty axes
         # and multiple num_shapes
         assume(min_side > 0)
-    note("(min_side, max_side): {}".format((min_side, max_side)))
+
     smallest_shapes, result = minimal(
         nps.mutually_broadcastable_shapes(
             num_shapes=num_shapes,
@@ -734,15 +739,18 @@ def test_minimize_mutually_broadcastable_shape(num_shapes, min_dims, base_shape,
             max_dims=max_dims,
         )
     )
-    note("(smallest_shapes, result): {}".format((smallest_shapes, result)))
+    note(f"smallest_shapes: {smallest_shapes}")
+    note(f"result: {result}")
     assert len(smallest_shapes) == num_shapes
     assert result == _broadcast_shapes(base_shape, *smallest_shapes)
     for smallest in smallest_shapes:
         n_leading = max(len(smallest) - len(base_shape), 0)
         n_aligned = max(len(smallest) - n_leading, 0)
+        note(f"n_leading: {n_leading}")
+        note(f"n_aligned: {n_aligned} {base_shape[-n_aligned:]}")
         expected = [min_side] * n_leading + [
-            1 if min_side <= 1 <= max_side else i
-            for i in base_shape[len(base_shape) - n_aligned :]
+            (min(1, i) if i != 1 else min_side) if min_side <= 1 <= max_side else i
+            for i in (base_shape[-n_aligned:] if n_aligned else ())
         ]
         assert tuple(expected) == smallest
 
@@ -854,7 +862,7 @@ def test_mutually_broadcastable_shapes_shrinking_with_singleton_out_of_bounds(
             max_dims=max_dims,
         )
     )
-    note("(smallest_shapes, result): {}".format((smallest_shapes, result)))
+    note(f"(smallest_shapes, result): {(smallest_shapes, result)}")
     assert len(smallest_shapes) == num_shapes
     assert result == _broadcast_shapes(base_shape, *smallest_shapes)
     for smallest in smallest_shapes:
@@ -911,7 +919,7 @@ def test_broadcastable_shape_can_generate_arbitrary_ndims(shape, max_dims, data)
     find_any(
         nps.broadcastable_shapes(shape, min_side=0, max_dims=max_dims, **kwargs),
         lambda x: len(x) == desired_ndim,
-        settings(max_examples=10 ** 6),
+        settings(max_examples=10**6),
     )
 
 
@@ -944,7 +952,45 @@ def test_mutually_broadcastable_shapes_can_generate_arbitrary_ndims(
             **kwargs,
         ),
         lambda x: {len(s) for s in x.input_shapes} == set(desired_ndims),
-        settings(max_examples=10 ** 6),
+        settings(max_examples=10**6),
+    )
+
+
+@settings(deadline=None)
+@given(
+    base_shape=nps.array_shapes(min_dims=0, max_dims=3, min_side=0, max_side=2),
+    max_dims=st.integers(1, 4),
+)
+def test_mutually_broadcastable_shapes_can_generate_interesting_singletons(
+    base_shape, max_dims
+):
+    find_any(
+        nps.mutually_broadcastable_shapes(
+            num_shapes=2,
+            base_shape=base_shape,
+            min_side=0,
+            max_dims=max_dims,
+        ),
+        lambda x: any(a != b for a, b in zip(*(s[::-1] for s in x.input_shapes))),  # type: ignore
+    )
+
+
+@pytest.mark.parametrize("base_shape", [(), (0,), (1,), (2,), (1, 2), (2, 1), (2, 2)])
+def test_mutually_broadcastable_shapes_can_generate_mirrored_singletons(base_shape):
+    def f(shapes: nps.BroadcastableShapes):
+        x, y = shapes.input_shapes
+        return x.count(1) == 1 and y.count(1) == 1 and x[::-1] == y
+
+    find_any(
+        nps.mutually_broadcastable_shapes(
+            num_shapes=2,
+            base_shape=base_shape,
+            min_side=0,
+            max_side=3,
+            min_dims=2,
+            max_dims=2,
+        ),
+        f,
     )
 
 
@@ -1020,7 +1066,7 @@ def test_advanced_integer_index_minimizes_as_documented(
         np.testing.assert_array_equal(s, d)
 
 
-@settings(deadline=None, max_examples=10)
+@settings(deadline=None, max_examples=25)
 @given(
     shape=nps.array_shapes(min_dims=1, max_dims=2, min_side=1, max_side=3),
     data=st.data(),
@@ -1029,7 +1075,7 @@ def test_advanced_integer_index_can_generate_any_pattern(shape, data):
     # ensures that generated index-arrays can be used to yield any pattern of elements from an array
     x = np.arange(np.product(shape)).reshape(shape)
 
-    target = data.draw(
+    target_array = data.draw(
         nps.arrays(
             shape=nps.array_shapes(min_dims=1, max_dims=2, min_side=1, max_side=2),
             elements=st.sampled_from(x.flatten()),
@@ -1037,12 +1083,17 @@ def test_advanced_integer_index_can_generate_any_pattern(shape, data):
         ),
         label="target",
     )
+
+    def index_selects_values_in_order(index):
+        selected = x[index]
+        target(len(set(selected.flatten())), label="unique indices")
+        target(float(np.sum(target_array == selected)), label="elements correct")
+        return np.all(target_array == selected)
+
     find_any(
-        nps.integer_array_indices(
-            shape, result_shape=st.just(target.shape), dtype=np.dtype("int8")
-        ),
-        lambda index: np.all(target == x[index]),
-        settings(max_examples=10 ** 6),
+        nps.integer_array_indices(shape, result_shape=st.just(target_array.shape)),
+        index_selects_values_in_order,
+        settings(max_examples=10**6),
     )
 
 
@@ -1087,22 +1138,41 @@ def test_basic_indices_can_generate_long_ellipsis():
     )
 )
 def test_basic_indices_replaces_whole_axis_slices_with_ellipsis(idx):
-    # If ... is in the slice, it replaces all ,:, entries for this shape.
+    # `slice(None)` (aka `:`) is the only valid index for an axis of size
+    # zero, so if all dimensions are 0 then a `...` will replace all the
+    # slices because we generate `...` for entire contiguous runs of `:`
     assert slice(None) not in idx
+
+
+def test_basic_indices_can_generate_indices_not_covering_all_dims():
+    # These "flat indices" are skippable in the underlying BasicIndexStrategy,
+    # so we ensure we're definitely generating them for nps.basic_indices().
+    find_any(
+        nps.basic_indices(shape=(3, 3, 3)),
+        lambda ix: (
+            (not isinstance(ix, tuple) and ix != Ellipsis)
+            or (isinstance(ix, tuple) and Ellipsis not in ix and len(ix) < 3)
+        ),
+    )
 
 
 @given(
     shape=nps.array_shapes(min_dims=0, max_side=4)
     | nps.array_shapes(min_dims=0, min_side=0, max_side=10),
-    min_dims=st.integers(0, 5),
-    allow_ellipsis=st.booleans(),
     allow_newaxis=st.booleans(),
+    allow_ellipsis=st.booleans(),
     data=st.data(),
 )
 def test_basic_indices_generate_valid_indexers(
-    shape, min_dims, allow_ellipsis, allow_newaxis, data
+    shape, allow_newaxis, allow_ellipsis, data
 ):
-    max_dims = data.draw(st.none() | st.integers(min_dims, 32), label="max_dims")
+    min_dims = data.draw(
+        st.integers(0, 5 if allow_newaxis else len(shape)), label="min_dims"
+    )
+    max_dims = data.draw(
+        st.none() | st.integers(min_dims, 32 if allow_newaxis else len(shape)),
+        label="max_dims",
+    )
     indexer = data.draw(
         nps.basic_indices(
             shape,
@@ -1113,6 +1183,7 @@ def test_basic_indices_generate_valid_indexers(
         ),
         label="indexer",
     )
+
     # Check that disallowed things are indeed absent
     if not allow_newaxis:
         if isinstance(indexer, tuple):
@@ -1127,7 +1198,7 @@ def test_basic_indices_generate_valid_indexers(
         # If there's a zero in the shape, the array will have no elements.
         array = np.zeros(shape)
         assert array.size == 0
-    elif np.prod(shape) <= 10 ** 5:
+    elif np.prod(shape) <= 10**5:
         # If it's small enough to instantiate, do so with distinct elements.
         array = np.arange(np.prod(shape)).reshape(shape)
     else:
@@ -1149,3 +1220,14 @@ def test_basic_indices_generate_valid_indexers(
 def test_array_owns_memory(x: np.ndarray):
     assert x.base is None
     assert x[...].base is x
+
+
+@given(st.data())
+def test_no_recursion_in_multi_line_reprs_issue_3560(data):
+    data.draw(nps.arrays(shape=(2,), dtype=float).map(lambda x: x))
+    data.draw(
+        nps.arrays(
+            shape=(2,),
+            dtype=float,
+        ).map(lambda x: x)
+    )

@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import decimal
 import math
@@ -26,7 +21,7 @@ def check_type(typ, arg, name):
     if not isinstance(arg, typ):
         if isinstance(typ, tuple):
             assert len(typ) >= 2, "Use bare type instead of len-1 tuple"
-            typ_string = "one of %s" % (", ".join(t.__name__ for t in typ))
+            typ_string = "one of " + ", ".join(t.__name__ for t in typ)
         else:
             typ_string = typ.__name__
 
@@ -38,8 +33,7 @@ def check_type(typ, arg, name):
                 assert typ is not SearchStrategy, "use check_strategy instead"
 
         raise InvalidArgument(
-            "Expected %s but got %s=%r (type=%s)"
-            % (typ_string, name, arg, type(arg).__name__)
+            f"Expected {typ_string} but got {name}={arg!r} (type={type(arg).__name__})"
         )
 
 
@@ -63,9 +57,9 @@ def check_valid_bound(value, name):
     if value is None or isinstance(value, (int, Rational)):
         return
     if not isinstance(value, (Real, decimal.Decimal)):
-        raise InvalidArgument("%s=%r must be a real number." % (name, value))
+        raise InvalidArgument(f"{name}={value!r} must be a real number.")
     if math.isnan(value):
-        raise InvalidArgument("Invalid end point %s=%r" % (name, value))
+        raise InvalidArgument(f"Invalid end point {name}={value!r}")
 
 
 @check_function
@@ -77,15 +71,9 @@ def check_valid_magnitude(value, name):
     """
     check_valid_bound(value, name)
     if value is not None and value < 0:
-        raise InvalidArgument("%s=%r must not be negative." % (name, value))
-    if value is None and name == "min_magnitude":
-        from hypothesis._settings import note_deprecation
-
-        note_deprecation(
-            "min_magnitude=None is deprecated; use min_magnitude=0 "
-            "or omit the argument entirely.",
-            since="2020-05-13",
-        )
+        raise InvalidArgument(f"{name}={value!r} must not be negative.")
+    elif value is None and name == "min_magnitude":
+        raise InvalidArgument("Use min_magnitude=0 or omit the argument entirely.")
 
 
 @check_function
@@ -96,11 +84,11 @@ def try_convert(typ, value, name):
         return value
     try:
         return typ(value)
-    except (TypeError, ValueError, ArithmeticError):
+    except (TypeError, ValueError, ArithmeticError) as err:
         raise InvalidArgument(
-            "Cannot convert %s=%r of type %s to type %s"
-            % (name, value, type(value).__name__, typ.__name__)
-        )
+            f"Cannot convert {name}={value!r} of type "
+            f"{type(value).__name__} to type {typ.__name__}"
+        ) from err
 
 
 @check_function
@@ -114,7 +102,7 @@ def check_valid_size(value, name):
         return
     check_type(int, value, name)
     if value < 0:
-        raise InvalidArgument("Invalid size %s=%r < 0" % (name, value))
+        raise InvalidArgument(f"Invalid size {name}={value!r} < 0")
 
 
 @check_function
@@ -128,8 +116,7 @@ def check_valid_interval(lower_bound, upper_bound, lower_name, upper_name):
         return
     if upper_bound < lower_bound:
         raise InvalidArgument(
-            "Cannot have %s=%r < %s=%r"
-            % (upper_name, upper_bound, lower_name, lower_bound)
+            f"Cannot have {upper_name}={upper_bound!r} < {lower_name}={lower_bound!r}"
         )
 
 

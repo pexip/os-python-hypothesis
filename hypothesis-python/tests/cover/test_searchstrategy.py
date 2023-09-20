@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import functools
 from collections import namedtuple
@@ -19,8 +14,9 @@ from collections import namedtuple
 import pytest
 
 from hypothesis.errors import InvalidArgument
-from hypothesis.strategies import booleans, integers, just, tuples
-from hypothesis.strategies._internal.strategies import one_of_strategies
+from hypothesis.internal.conjecture.data import ConjectureData
+from hypothesis.strategies import booleans, integers, just, none, tuples
+
 from tests.common.debug import assert_no_examples
 
 
@@ -28,11 +24,6 @@ def test_or_errors_when_given_non_strategy():
     bools = tuples(booleans())
     with pytest.raises(ValueError):
         bools | "foo"
-
-
-def test_joining_zero_strategies_fails():
-    with pytest.raises(ValueError):
-        one_of_strategies(())
 
 
 SomeNamedTuple = namedtuple("SomeNamedTuple", ("a", "b"))
@@ -50,7 +41,19 @@ def test_just_strategy_uses_repr():
         def __repr__(self):
             return "ABCDEFG"
 
-    assert repr(just(WeirdRepr())) == "just(%r)" % (WeirdRepr(),)
+    assert repr(just(WeirdRepr())) == f"just({WeirdRepr()!r})"
+
+
+def test_just_strategy_does_not_draw():
+    data = ConjectureData.for_buffer(b"")
+    s = just("hello")
+    assert s.do_draw(data) == "hello"
+
+
+def test_none_strategy_does_not_draw():
+    data = ConjectureData.for_buffer(b"")
+    s = none()
+    assert s.do_draw(data) is None
 
 
 def test_can_map():

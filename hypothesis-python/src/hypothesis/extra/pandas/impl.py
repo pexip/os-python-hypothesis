@@ -1,40 +1,38 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from collections import OrderedDict, abc
 from copy import copy
+from datetime import datetime, timedelta
 from typing import Any, List, Optional, Sequence, Set, Union
 
 import attr
 import numpy as np
 import pandas
 
+from hypothesis import strategies as st
+from hypothesis._settings import note_deprecation
 from hypothesis.control import reject
 from hypothesis.errors import InvalidArgument
 from hypothesis.extra import numpy as npst
 from hypothesis.internal.conjecture import utils as cu
 from hypothesis.internal.coverage import check, check_function
-from hypothesis.internal.reflection import deprecated_posargs
+from hypothesis.internal.reflection import get_pretty_function_description
 from hypothesis.internal.validation import (
     check_type,
     check_valid_interval,
     check_valid_size,
     try_convert,
 )
-from hypothesis.strategies._internal import core as st
-from hypothesis.strategies._internal.strategies import Ex
+from hypothesis.strategies._internal.strategies import Ex, check_strategy
+from hypothesis.strategies._internal.utils import cacheable, defines_strategy
 
 try:
     from pandas.api.types import is_categorical_dtype
@@ -61,31 +59,39 @@ def infer_dtype_if_necessary(dtype, values, elements, draw):
 
 @check_function
 def elements_and_dtype(elements, dtype, source=None):
-
     if source is None:
         prefix = ""
     else:
-        prefix = "%s." % (source,)
+        prefix = f"{source}."
 
     if elements is not None:
-        st.check_strategy(elements, "%selements" % (prefix,))
+        check_strategy(elements, f"{prefix}elements")
     else:
         with check("dtype is not None"):
             if dtype is None:
                 raise InvalidArgument(
-                    (
-                        "At least one of %(prefix)selements or %(prefix)sdtype "
-                        "must be provided."
-                    )
-                    % {"prefix": prefix}
+                    f"At least one of {prefix}elements or {prefix}dtype must be provided."
                 )
 
     with check("is_categorical_dtype"):
         if is_categorical_dtype(dtype):
             raise InvalidArgument(
-                "%sdtype is categorical, which is currently unsupported" % (prefix,)
+                f"{prefix}dtype is categorical, which is currently unsupported"
             )
 
+    if isinstance(dtype, type) and np.dtype(dtype).kind == "O" and dtype is not object:
+        note_deprecation(
+            f"Passed dtype={dtype!r} is not a valid Pandas dtype.  We'll treat it as "
+            "dtype=object for now, but this will be an error in a future version.",
+            since="2021-12-31",
+            has_codemod=False,
+        )
+
+    if isinstance(dtype, st.SearchStrategy):
+        raise InvalidArgument(
+            f"Passed dtype={dtype!r} is a strategy, but we require a concrete dtype "
+            "here.  See https://stackoverflow.com/q/74355937 for workaround patterns."
+        )
     dtype = try_convert(np.dtype, dtype, "dtype")
 
     if elements is None:
@@ -93,18 +99,18 @@ def elements_and_dtype(elements, dtype, source=None):
     elif dtype is not None:
 
         def convert_element(value):
-            name = "draw(%selements)" % (prefix,)
+            name = f"draw({prefix}elements)"
             try:
                 return np.array([value], dtype=dtype)[0]
             except TypeError:
                 raise InvalidArgument(
                     "Cannot convert %s=%r of type %s to dtype %s"
                     % (name, value, type(value).__name__, dtype.str)
-                )
+                ) from None
             except ValueError:
                 raise InvalidArgument(
-                    "Cannot convert %s=%r to type %s" % (name, value, dtype.str)
-                )
+                    f"Cannot convert {name}={value!r} to type {dtype.str}"
+                ) from None
 
         elements = elements.map(convert_element)
     assert elements is not None
@@ -113,13 +119,14 @@ def elements_and_dtype(elements, dtype, source=None):
 
 
 class ValueIndexStrategy(st.SearchStrategy):
-    def __init__(self, elements, dtype, min_size, max_size, unique):
+    def __init__(self, elements, dtype, min_size, max_size, unique, name):
         super().__init__()
         self.elements = elements
         self.dtype = dtype
         self.min_size = min_size
         self.max_size = max_size
         self.unique = unique
+        self.name = name
 
     def do_draw(self, data):
         result = []
@@ -145,17 +152,20 @@ class ValueIndexStrategy(st.SearchStrategy):
         dtype = infer_dtype_if_necessary(
             dtype=self.dtype, values=result, elements=self.elements, draw=data.draw
         )
-        return pandas.Index(result, dtype=dtype, tupleize_cols=False)
+        return pandas.Index(
+            result, dtype=dtype, tupleize_cols=False, name=data.draw(self.name)
+        )
 
 
 DEFAULT_MAX_SIZE = 10
 
 
-@st.cacheable
-@st.defines_strategy()
+@cacheable
+@defines_strategy()
 def range_indexes(
     min_size: int = 0,
     max_size: Optional[int] = None,
+    name: st.SearchStrategy[Optional[str]] = st.none(),
 ) -> st.SearchStrategy[pandas.RangeIndex]:
     """Provides a strategy which generates an :class:`~pandas.Index` whose
     values are 0, 1, ..., n for some n.
@@ -165,18 +175,20 @@ def range_indexes(
     * min_size is the smallest number of elements the index can have.
     * max_size is the largest number of elements the index can have. If None
       it will default to some suitable value based on min_size.
+    * name is the name of the index. If st.none(), the index will have no name.
     """
     check_valid_size(min_size, "min_size")
     check_valid_size(max_size, "max_size")
     if max_size is None:
-        max_size = min([min_size + DEFAULT_MAX_SIZE, 2 ** 63 - 1])
+        max_size = min([min_size + DEFAULT_MAX_SIZE, 2**63 - 1])
     check_valid_interval(min_size, max_size, "min_size", "max_size")
-    return st.integers(min_size, max_size).map(pandas.RangeIndex)
+    check_strategy(name)
+
+    return st.builds(pandas.RangeIndex, st.integers(min_size, max_size), name=name)
 
 
-@st.cacheable
-@st.defines_strategy()
-@deprecated_posargs
+@cacheable
+@defines_strategy()
 def indexes(
     *,
     elements: Optional[st.SearchStrategy[Ex]] = None,
@@ -184,6 +196,7 @@ def indexes(
     min_size: int = 0,
     max_size: Optional[int] = None,
     unique: bool = True,
+    name: st.SearchStrategy[Optional[str]] = st.none(),
 ) -> st.SearchStrategy[pandas.Index]:
     """Provides a strategy for producing a :class:`pandas.Index`.
 
@@ -203,6 +216,8 @@ def indexes(
       should pass a max_size explicitly.
     * unique specifies whether all of the elements in the resulting index
       should be distinct.
+    * name is a strategy for strings or ``None``, which will be passed to
+      the :class:`pandas.Index` constructor.
     """
     check_valid_size(min_size, "min_size")
     check_valid_size(max_size, "max_size")
@@ -213,11 +228,10 @@ def indexes(
 
     if max_size is None:
         max_size = min_size + DEFAULT_MAX_SIZE
-    return ValueIndexStrategy(elements, dtype, min_size, max_size, unique)
+    return ValueIndexStrategy(elements, dtype, min_size, max_size, unique, name)
 
 
-@st.defines_strategy()
-@deprecated_posargs
+@defines_strategy()
 def series(
     *,
     elements: Optional[st.SearchStrategy[Ex]] = None,
@@ -225,6 +239,7 @@ def series(
     index: Optional[st.SearchStrategy[Union[Sequence, pandas.Index]]] = None,
     fill: Optional[st.SearchStrategy[Ex]] = None,
     unique: bool = False,
+    name: st.SearchStrategy[Optional[str]] = st.none(),
 ) -> st.SearchStrategy[pandas.Series]:
     """Provides a strategy for producing a :class:`pandas.Series`.
 
@@ -251,6 +266,9 @@ def series(
       :func:`~hypothesis.extra.pandas.range_indexes` function to produce
       values for this argument.
 
+    * name: is a strategy for strings or ``None``, which will be passed to
+      the :class:`pandas.Series` constructor.
+
     Usage:
 
     .. code-block:: pycon
@@ -262,7 +280,7 @@ def series(
     if index is None:
         index = range_indexes()
     else:
-        st.check_strategy(index, "index")
+        check_strategy(index, "index")
 
     elements, dtype = elements_and_dtype(elements, dtype)
     index_strategy = index
@@ -295,7 +313,7 @@ def series(
                     )
                 )
 
-            return pandas.Series(result_data, index=index, dtype=dtype)
+            return pandas.Series(result_data, index=index, dtype=dtype, name=draw(name))
         else:
             return pandas.Series(
                 (),
@@ -303,6 +321,7 @@ def series(
                 dtype=dtype
                 if dtype is not None
                 else draw(dtype_for_elements_strategy(elements)),
+                name=draw(name),
             )
 
     return result()
@@ -328,12 +347,11 @@ class column:
 
     name = attr.ib(default=None)
     elements = attr.ib(default=None)
-    dtype = attr.ib(default=None)
+    dtype = attr.ib(default=None, repr=get_pretty_function_description)
     fill = attr.ib(default=None)
     unique = attr.ib(default=False)
 
 
-@deprecated_posargs
 def columns(
     names_or_number: Union[int, Sequence[str]],
     *,
@@ -352,7 +370,7 @@ def columns(
     create the columns.
     """
     if isinstance(names_or_number, (int, float)):
-        names = [None] * names_or_number  # type: list
+        names: List[Union[int, str, None]] = [None] * names_or_number
     else:
         names = list(names_or_number)
     return [
@@ -361,8 +379,7 @@ def columns(
     ]
 
 
-@deprecated_posargs
-@st.defines_strategy()
+@defines_strategy()
 def data_frames(
     columns: Optional[Sequence[column]] = None,
     *,
@@ -474,7 +491,7 @@ def data_frames(
     if index is None:
         index = range_indexes()
     else:
-        st.check_strategy(index, "index")
+        check_strategy(index, "index")
 
     index_strategy = index
 
@@ -505,17 +522,17 @@ def data_frames(
             return rows_only()
 
     assert columns is not None
-    cols = try_convert(tuple, columns, "columns")  # type: Sequence[column]
+    cols = try_convert(tuple, columns, "columns")
 
     rewritten_columns = []
-    column_names = set()  # type: Set[str]
+    column_names: Set[str] = set()
 
     for i, c in enumerate(cols):
-        check_type(column, c, "columns[%d]" % (i,))
+        check_type(column, c, f"columns[{i}]")
 
         c = copy(c)
         if c.name is None:
-            label = "columns[%d]" % (i,)
+            label = f"columns[{i}]"
             c.name = i
         else:
             label = c.name
@@ -523,13 +540,12 @@ def data_frames(
                 hash(c.name)
             except TypeError:
                 raise InvalidArgument(
-                    "Column names must be hashable, but columns[%d].name was "
-                    "%r of type %s, which cannot be hashed."
-                    % (i, c.name, type(c.name).__name__)
-                )
+                    f"Column names must be hashable, but columns[{i}].name was "
+                    f"{c.name!r} of type {type(c.name).__name__}, which cannot be hashed."
+                ) from None
 
         if c.name in column_names:
-            raise InvalidArgument("duplicate definition of column name %r" % (c.name,))
+            raise InvalidArgument(f"duplicate definition of column name {c.name!r}")
 
         column_names.add(c.name)
 
@@ -537,8 +553,7 @@ def data_frames(
 
         if c.dtype is None and rows is not None:
             raise InvalidArgument(
-                "Must specify a dtype for all columns when combining rows with"
-                " columns."
+                "Must specify a dtype for all columns when combining rows with columns."
             )
 
         c.fill = npst.fill_for(
@@ -590,7 +605,21 @@ def data_frames(
                                 reject()
                         else:
                             value = draw(c.elements)
-                        data[c.name][i] = value
+                        try:
+                            data[c.name][i] = value
+                        except ValueError as err:  # pragma: no cover
+                            # This just works in Pandas 1.4 and later, but gives
+                            # a confusing error on previous versions.
+                            if c.dtype is None and not isinstance(
+                                value, (float, int, str, bool, datetime, timedelta)
+                            ):
+                                raise ValueError(
+                                    f"Failed to add value={value!r} to column "
+                                    f"{c.name} with dtype=None.  Maybe passing "
+                                    "dtype=object would help?"
+                                ) from err
+                            # Unclear how this could happen, but users find a way...
+                            raise
 
             for c in rewritten_columns:
                 if not c.fill.is_empty:
@@ -677,11 +706,8 @@ def data_frames(
 
                     if len(row) > len(rewritten_columns):
                         raise InvalidArgument(
-                            (
-                                "Row %r contains too many entries. Has %d but "
-                                "expected at most %d"
-                            )
-                            % (original_row, len(row), len(rewritten_columns))
+                            f"Row {original_row!r} contains too many entries. Has "
+                            f"{len(row)} but expected at most {len(rewritten_columns)}"
                         )
                     while len(row) < len(rewritten_columns):
                         c = rewritten_columns[len(row)]

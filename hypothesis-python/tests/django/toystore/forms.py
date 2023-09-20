@@ -1,19 +1,15 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from django import forms
+from django.contrib.auth.forms import ReadOnlyPasswordHashField, UsernameField
 from django.core.validators import (
     MaxLengthValidator,
     MaxValueValidator,
@@ -34,12 +30,12 @@ from tests.django.toystore.models import (
 class ReprModelForm(forms.ModelForm):
     def __repr__(self):
         """I recommend putting this in your form to show the failed cases."""
-        return "%r\n%r" % (self.data, self.errors)
+        return f"{self.data!r}\n{self.errors!r}"
 
 
 class ReprForm(forms.Form):
     def __repr__(self):
-        return "%r\n%r" % (self.data, self.errors)
+        return f"{self.data!r}\n{self.errors!r}"
 
 
 class CouldBeCharmingForm(ReprModelForm):
@@ -76,7 +72,7 @@ class DynamicForm(ReprForm):
     def __init__(self, field_count=5, **kwargs):
         super().__init__(**kwargs)
         for i in range(field_count):
-            field_name = "field-%d" % (i,)
+            field_name = f"field-{i}"
             self.fields[field_name] = forms.CharField(required=False)
 
 
@@ -206,7 +202,7 @@ class MultiBooleanField(forms.MultiValueField):
         super().__init__(fields=subfields, widget=widget)
 
     def compress(self, values):
-        return "::".join([str(x) for x in values])
+        return "::".join(str(x) for x in values)
 
 
 class ManyMultiValueForm(ReprForm):
@@ -217,3 +213,11 @@ class ManyMultiValueForm(ReprForm):
 
 class ShortStringForm(ReprForm):
     _not_too_long = forms.CharField(max_length=20, required=False)
+
+
+class UsernameForm(ReprForm):
+    username = UsernameField()
+
+
+class ReadOnlyPasswordHashFieldForm(ReprForm):
+    password = ReadOnlyPasswordHashField()

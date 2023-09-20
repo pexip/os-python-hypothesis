@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from random import Random
 
@@ -28,7 +23,7 @@ POISON = "POISON"
 
 class Poisoned(SearchStrategy):
     def __init__(self, poison_chance):
-        SearchStrategy.__init__(self)
+        super().__init__()
         self.__poison_chance = poison_chance
         self.__ints = st.integers(0, 10)
 
@@ -41,7 +36,7 @@ class Poisoned(SearchStrategy):
 
 class LinearLists(SearchStrategy):
     def __init__(self, elements, size):
-        SearchStrategy.__init__(self)
+        super().__init__()
         self.__length = st.integers(0, size)
         self.__elements = elements
 
@@ -51,8 +46,8 @@ class LinearLists(SearchStrategy):
 
 class Matrices(SearchStrategy):
     def __init__(self, elements, size):
-        SearchStrategy.__init__(self)
-        self.__length = st.integers(0, ceil(size ** 0.5))
+        super().__init__()
+        self.__length = st.integers(0, ceil(size**0.5))
         self.__elements = elements
 
     def do_draw(self, data):
@@ -62,7 +57,7 @@ class Matrices(SearchStrategy):
         return [data.draw(self.__elements) for _ in range(n * m)]
 
 
-LOTS = 10 ** 6
+LOTS = 10**6
 
 TRIAL_SETTINGS = settings(max_examples=LOTS, database=None)
 

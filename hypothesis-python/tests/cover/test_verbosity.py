@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from contextlib import contextmanager
 
@@ -19,6 +14,7 @@ from hypothesis import example, find, given
 from hypothesis._settings import Verbosity, settings
 from hypothesis.reporting import default as default_reporter, with_reporter
 from hypothesis.strategies import booleans, integers, lists
+
 from tests.common.debug import minimal
 from tests.common.utils import capture_out, fails
 
@@ -49,7 +45,7 @@ def test_does_not_log_in_quiet_mode():
         @settings(verbosity=Verbosity.quiet, print_blob=False)
         @given(integers())
         def test_foo(x):
-            assert False
+            raise AssertionError
 
         test_foo()
     assert not o.getvalue()
@@ -65,11 +61,9 @@ def test_includes_progress_in_verbose_mode():
     out = o.getvalue()
     assert out
     assert "Trying example: " in out
-    assert "Falsifying example: " in out
 
 
 def test_prints_initial_attempts_on_find():
-
     with capture_verbosity() as o:
 
         def foo():

@@ -1,5 +1,13 @@
+black
+click
 coverage
-lark-parser
+dpcontracts
+fakeredis
+lark
+libcst
 numpy
 pandas
+python-dateutil
 pytz
+typing-extensions
+-r test.in

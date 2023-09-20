@@ -1,29 +1,26 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
-from inspect import getfullargspec
-from typing import Dict
+from inspect import signature
+from typing import MutableMapping
+from weakref import WeakKeyDictionary
 
 from hypothesis.internal.reflection import (
-    arg_string,
     convert_keyword_arguments,
     convert_positional_arguments,
+    get_pretty_function_description,
+    repr_call,
 )
 from hypothesis.strategies._internal.strategies import SearchStrategy
 
-unwrap_cache = {}  # type: Dict[SearchStrategy, SearchStrategy]
+unwrap_cache: MutableMapping[SearchStrategy, SearchStrategy] = WeakKeyDictionary()
 unwrap_depth = 0
 
 
@@ -63,6 +60,10 @@ def unwrap_strategies(s):
         assert unwrap_depth >= 0
 
 
+def _repr_filter(condition):
+    return f".filter({get_pretty_function_description(condition)})"
+
+
 class LazyStrategy(SearchStrategy):
     """A strategy which is defined purely by conversion to and from another
     strategy.
@@ -70,13 +71,14 @@ class LazyStrategy(SearchStrategy):
     Its parameter and distribution come from that other strategy.
     """
 
-    def __init__(self, function, args, kwargs, *, force_repr=None):
-        SearchStrategy.__init__(self)
+    def __init__(self, function, args, kwargs, filters=(), *, force_repr=None):
+        super().__init__()
         self.__wrapped_strategy = None
         self.__representation = force_repr
         self.function = function
         self.__args = args
         self.__kwargs = kwargs
+        self.__filters = filters
 
     @property
     def supports_find(self):
@@ -110,49 +112,48 @@ class LazyStrategy(SearchStrategy):
                 self.__wrapped_strategy = self.function(
                     *unwrapped_args, **unwrapped_kwargs
                 )
+            for f in self.__filters:
+                self.__wrapped_strategy = self.__wrapped_strategy.filter(f)
         return self.__wrapped_strategy
+
+    def filter(self, condition):
+        return LazyStrategy(
+            self.function,
+            self.__args,
+            self.__kwargs,
+            self.__filters + (condition,),
+            force_repr=f"{self!r}{_repr_filter(condition)}",
+        )
 
     def do_validate(self):
         w = self.wrapped_strategy
-        assert isinstance(w, SearchStrategy), "%r returned non-strategy %r" % (self, w)
+        assert isinstance(w, SearchStrategy), f"{self!r} returned non-strategy {w!r}"
         w.validate()
 
     def __repr__(self):
         if self.__representation is None:
-            _args = self.__args
-            _kwargs = self.__kwargs
-            argspec = getfullargspec(self.function)
-            defaults = dict(argspec.kwonlydefaults or {})
-            if argspec.defaults is not None:
-                for name, value in zip(
-                    reversed(argspec.args), reversed(argspec.defaults)
-                ):
-                    defaults[name] = value
-            if len(argspec.args) > 1 or argspec.defaults:
+            sig = signature(self.function)
+            pos = [p for p in sig.parameters.values() if "POSITIONAL" in p.kind.name]
+            if len(pos) > 1 or any(p.default is not sig.empty for p in pos):
                 _args, _kwargs = convert_positional_arguments(
-                    self.function, _args, _kwargs
+                    self.function, self.__args, self.__kwargs
                 )
             else:
                 _args, _kwargs = convert_keyword_arguments(
-                    self.function, _args, _kwargs
+                    self.function, self.__args, self.__kwargs
                 )
-            kwargs_for_repr = dict(_kwargs)
-            for k, v in defaults.items():
-                if k in kwargs_for_repr and kwargs_for_repr[k] is v:
-                    del kwargs_for_repr[k]
-            self.__representation = "%s(%s)" % (
-                self.function.__name__,
-                arg_string(self.function, _args, kwargs_for_repr, reorder=False),
-            )
+            kwargs_for_repr = {
+                k: v
+                for k, v in _kwargs.items()
+                if k not in sig.parameters or v is not sig.parameters[k].default
+            }
+            self.__representation = repr_call(
+                self.function, _args, kwargs_for_repr, reorder=False
+            ) + "".join(map(_repr_filter, self.__filters))
         return self.__representation
 
     def do_draw(self, data):
         return data.draw(self.wrapped_strategy)
-
-    def do_filtered_draw(self, data, filter_strategy):
-        return self.wrapped_strategy.do_filtered_draw(
-            data=data, filter_strategy=filter_strategy
-        )
 
     @property
     def label(self):

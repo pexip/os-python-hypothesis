@@ -1,27 +1,21 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import attr
 
-from hypothesis.errors import Flaky, HypothesisException
+from hypothesis.errors import Flaky, HypothesisException, StopTest
 from hypothesis.internal.compat import int_to_bytes
 from hypothesis.internal.conjecture.data import (
     ConjectureData,
     DataObserver,
     Status,
-    StopTest,
     bits_to_bytes,
 )
 from hypothesis.internal.conjecture.junkdrawer import IntList
@@ -39,7 +33,7 @@ def inconsistent_generation():
     )
 
 
-EMPTY = frozenset()
+EMPTY: frozenset = frozenset()
 
 
 @attr.s(slots=True)
@@ -71,14 +65,6 @@ class Conclusion:
 
     status = attr.ib()
     interesting_origin = attr.ib()
-
-
-CONCLUSIONS = {}
-
-
-def conclusion(status, interesting_origin):
-    result = Conclusion(status, interesting_origin)
-    return CONCLUSIONS.setdefault(result, result)
 
 
 @attr.s(slots=True)
@@ -264,7 +250,7 @@ class DataTree:
                     # on, hence the pragma.
                     assert (  # pragma: no cover
                         check_counter != 1000
-                        or len(branch.children) < (2 ** n_bits)
+                        or len(branch.children) < (2**n_bits)
                         or any(not v.is_exhausted for v in branch.children.values())
                     )
 
@@ -307,8 +293,8 @@ class DataTree:
                     v = data.draw_bits(node.transition.bit_length)
                     try:
                         node = node.transition.children[v]
-                    except KeyError:
-                        raise PreviouslyUnseenBehaviour()
+                    except KeyError as err:
+                        raise PreviouslyUnseenBehaviour() from err
                 else:
                     assert isinstance(node.transition, Killed)
                     data.observer.kill_branch()
@@ -407,7 +393,7 @@ class TreeRecordingObserver(DataObserver):
         if i < len(node.values) or isinstance(node.transition, Branch):
             inconsistent_generation()
 
-        new_transition = conclusion(status, interesting_origin)
+        new_transition = Conclusion(status, interesting_origin)
 
         if node.transition is not None and node.transition != new_transition:
             # As an, I'm afraid, horrible bodge, we deliberately ignore flakiness
@@ -418,8 +404,8 @@ class TreeRecordingObserver(DataObserver):
                 or new_transition.status != Status.VALID
             ):
                 raise Flaky(
-                    "Inconsistent test results! Test case was %r on first run but %r on second"
-                    % (node.transition, new_transition)
+                    f"Inconsistent test results! Test case was {node.transition!r} "
+                    f"on first run but {new_transition!r} on second"
                 )
         else:
             node.transition = new_transition

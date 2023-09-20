@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import hashlib
 import math
@@ -57,7 +52,7 @@ def update_learned_dfas():
     lines.append("")
 
     for k, v in sorted(SHRINKING_DFAS.items()):
-        lines.append("SHRINKING_DFAS[%r] = %r  # noqa: E501" % (k, v))
+        lines.append(f"SHRINKING_DFAS[{k!r}] = {v!r}  # noqa: E501")
 
     lines.append("")
     lines.append("# fmt: on")
@@ -238,6 +233,7 @@ def normalize(
     required_successes=100,
     allowed_to_update=False,
     max_dfas=10,
+    random=None,
 ):
     """Attempt to ensure that this test function successfully normalizes - i.e.
     whenever it declares a test case to be interesting, we are able
@@ -267,6 +263,7 @@ def normalize(
         test_function,
         settings=settings(database=None, suppress_health_check=HealthCheck.all()),
         ignore_limits=True,
+        random=random,
     )
 
     seen = set()
@@ -310,14 +307,14 @@ def normalize(
 
         if not allowed_to_update:
             raise FailedToNormalise(
-                "Shrinker failed to normalize %r to %r and we are not allowed to learn new DFAs."
-                % (previous.buffer, current.buffer)
+                f"Shrinker failed to normalize {previous.buffer!r} to "
+                f"{current.buffer!r} and we are not allowed to learn new DFAs."
             )
 
         if dfas_added >= max_dfas:
             raise FailedToNormalise(
-                "Test function is too hard to learn: Added %d DFAs and still not done."
-                % (dfas_added,)
+                f"Test function is too hard to learn: Added {dfas_added} "
+                "DFAs and still not done."
             )
 
         dfas_added += 1
@@ -326,11 +323,7 @@ def normalize(
             runner, previous.buffer, current.buffer, shrinking_predicate
         )
 
-        name = (
-            base_name
-            + "-"
-            + hashlib.sha256(repr(new_dfa).encode("utf-8")).hexdigest()[:10]
-        )
+        name = base_name + "-" + hashlib.sha256(repr(new_dfa).encode()).hexdigest()[:10]
 
         # If there is a name collision this DFA should already be being
         # used for shrinking, so we should have already been able to shrink

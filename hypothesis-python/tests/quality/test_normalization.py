@@ -1,25 +1,23 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from itertools import islice
+from random import Random
 
 import pytest
 
 from hypothesis import strategies as st
+from hypothesis.control import BuildContext
 from hypothesis.errors import UnsatisfiedAssumption
 from hypothesis.internal.conjecture.shrinking import dfas
+
 from tests.quality.test_shrinking_order import iter_values
 
 
@@ -38,7 +36,6 @@ def normalize_kwargs(request):
     ids=repr,
 )
 def test_common_strategies_normalize_small_values(strategy, n, normalize_kwargs):
-
     excluded = list(map(repr, islice(iter_values(strategy, unique_by=repr), n)))
 
     def test_function(data):
@@ -55,16 +52,13 @@ def test_common_strategies_normalize_small_values(strategy, n, normalize_kwargs)
 
 @pytest.mark.parametrize("strategy", [st.emails(), st.complex_numbers()], ids=repr)
 def test_harder_strategies_normalize_to_minimal(strategy, normalize_kwargs):
-    import random
-
-    random.seed(0)
-
     def test_function(data):
-        try:
-            v = data.draw(strategy)
-        except UnsatisfiedAssumption:
-            data.mark_invalid()
-        data.output = repr(v)
-        data.mark_interesting()
+        with BuildContext(data):
+            try:
+                v = data.draw(strategy)
+            except UnsatisfiedAssumption:
+                data.mark_invalid()
+            data.output = repr(v)
+            data.mark_interesting()
 
-    dfas.normalize(repr(strategy), test_function, **normalize_kwargs)
+    dfas.normalize(repr(strategy), test_function, random=Random(0), **normalize_kwargs)

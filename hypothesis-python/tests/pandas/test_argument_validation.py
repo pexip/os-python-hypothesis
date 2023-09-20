@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from datetime import datetime
 
@@ -19,7 +14,9 @@ import pandas as pd
 
 from hypothesis import given, strategies as st
 from hypothesis.extra import pandas as pdst
+
 from tests.common.arguments import argument_validation_test, e
+from tests.common.utils import checks_deprecated_behaviour
 
 BAD_ARGS = [
     e(pdst.data_frames),
@@ -68,6 +65,7 @@ BAD_ARGS = [
     e(pdst.indexes, elements="not a strategy"),
     e(pdst.indexes, elements=st.text(), dtype=float),
     e(pdst.indexes, elements=st.none(), dtype=int),
+    e(pdst.indexes, elements=st.integers(0, 10), dtype=st.sampled_from([int, float])),
     e(pdst.indexes, dtype=int, max_size=0, min_size=1),
     e(pdst.indexes, dtype=int, unique="true"),
     e(pdst.indexes, dtype=int, min_size="0"),
@@ -75,6 +73,7 @@ BAD_ARGS = [
     e(pdst.range_indexes, 1, 0),
     e(pdst.range_indexes, min_size="0"),
     e(pdst.range_indexes, max_size="1"),
+    e(pdst.range_indexes, name=""),
     e(pdst.series),
     e(pdst.series, dtype="not a dtype"),
     e(pdst.series, elements="not a strategy"),
@@ -95,3 +94,8 @@ def test_timestamp_as_datetime_bounds(dt):
     assert isinstance(dt, datetime)
     assert lo <= dt <= hi
     assert not isinstance(dt, pd.Timestamp)
+
+
+@checks_deprecated_behaviour
+def test_confusing_object_dtype_aliases():
+    pdst.series(elements=st.tuples(st.integers()), dtype=tuple).example()

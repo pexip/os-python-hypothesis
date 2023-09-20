@@ -4,6 +4,17 @@ Contributing
 
 First off: It's great that you want to contribute to Hypothesis! Thanks!
 
+---------------------------------------
+Just tell me how to make a pull request
+---------------------------------------
+
+1. Make you change and ensure it has adequate tests
+2. Create ``hypothesis-python/RELEASE.rst`` with ``RELEASE_TYPE: patch``
+   for small bugfixes, or ``minor`` for new features.  See recent PRs for examples.
+3. Add yourself to the list in ``AUTHORS.rst`` and open a PR!
+
+For more detail, read on; for even more, continue to the ``guides/`` directory!
+
 ------------------
 Ways to Contribute
 ------------------
@@ -42,8 +53,8 @@ make changes and install the changed version) you can do this with:
 
 .. code:: bash
 
-  pip install -r requirements/test.txt
-  pip install -r requirements/tools.txt
+  pip install -r requirements/test.in
+  pip install -r requirements/tools.in
   pip install -e hypothesis-python/
 
   # You don't need to run the tests, but here's the command:
@@ -87,7 +98,7 @@ The actual contribution
 OK, so you want to make a contribution and have sorted out the legalese. What now?
 
 First off: If you're planning on implementing a new feature, talk to us
-first! Come `join us on IRC <https://hypothesis.readthedocs.io/en/latest/community.html#community>`_,
+first! Come `join us on the mailing list <https://hypothesis.readthedocs.io/en/latest/community.html#community>`_,
 or open an issue. If it's really small feel free to open a work in progress pull request sketching
 out the idea, but it's best to get feedback from the Hypothesis maintainers
 before sinking a bunch of work into it.
@@ -100,7 +111,7 @@ or help with some of the tricky details. Don't be afraid to ask for help.
 In order to get merged, a pull request will have to have a green build (naturally) and
 to be approved by a Hypothesis maintainer (and, depending on what it is, possibly specifically
 by DRMacIver).  Most pull requests will also need to `write a changelog entry in
-``hypothesis-python/RELEASE.rst`` <guides/documentation.rst#changelog-entries>`__.
+hypothesis-python/RELEASE.rst <guides/documentation.rst#changelog-entries>`_.
 
 The review process is the same one that all changes to Hypothesis go through, regardless of
 whether you're an established maintainer or entirely new to the project. It's very much
@@ -152,19 +163,20 @@ unless you want to make changes to the test config. You also mostly don't need t
 except to type ``./build.sh`` followed by the name of the task you want to run.
 
 All of it will be checked on CI so you don't *have* to run anything locally, but you might
-find it useful to do so: A full Travis run takes about twenty minutes, and there's often a queue,
+find it useful to do so: A full CI run can take up to twenty minutes,
 so running a smaller set of tests locally can be helpful.
 
 The build system should be "fairly" portable, but is currently only known to work on Linux or OS X. It *might* work
-on a BSD or on Windows with cygwin installed, but it hasn't been tried. If you try it and find it doesn't
-work, please do submit patches to fix that.
+on a BSD or on Windows with cygwin installed, but it hasn't been tried.  Windows with WSL does work,
+as for Linux, and since OS-specific issues are rare for Hypothesis that's pretty useful.
+If you try it and find it doesn't work, please do submit patches to fix that.
 
 Some notable commands:
 
 ``./build.sh check-coverage`` will verify 100% code coverage by running a
 curated subset of the test suite.
 
-``./build.sh check-py36`` (etc.) will run most of the test suite against a
+``./build.sh check-py37`` (etc.) will run most of the test suite against a
 particular python version.
 
 ``./build.sh format`` will reformat your code according to the Hypothesis coding style. You should use this before each
@@ -174,8 +186,58 @@ You can also use ``./build.sh check-format``, which will run format and some lin
 git diff. Note: This will error even if you started with a git diff, so if you've got any uncommitted changes
 this will necessarily report an error.
 
-Look in ``.travis.yml`` for a short list of other supported build tasks.
+Run ``./build.sh tasks`` for a list of all supported build task names.
 
 Note: The build requires a lot of different versions of python, so rather than have you install them yourself,
 the build system will install them itself in a local directory. This means that the first time you run a task you
 may have to wait a while as the build downloads and installs the right version of python for you.
+
+~~~~~~~~~~~~~
+Running Tests
+~~~~~~~~~~~~~
+
+The tasks described above will run all of the tests (e.g. ``check-py37``). But
+the ``tox`` task will give finer-grained control over the test runner. At a
+high level, the task takes the form:
+
+.. code-block::
+
+    ./build.sh tox py37-custom 3.7.13 [tox args] -- [pytest args]
+
+Namely, first provide the tox environment (see ``tox.ini``), then the python
+version to test with, then any ``tox`` or ``pytest`` args as needed. For
+example, to run all of the tests in the file
+``tests/nocover/test_conjecture_engine.py`` with python 3.8:
+
+.. code-block::
+
+    ./build.sh tox py38-custom 3.8.13 -- tests/nocover/test_conjecture_engine.py
+
+See the ``tox`` docs and ``pytest`` docs for more information:
+* https://docs.pytest.org/en/latest/how-to/usage.html
+* https://tox.wiki/en/latest/config.html#cli
+
+^^^^^^^^^^^
+Test Layout
+^^^^^^^^^^^
+
+See ``hypothesis-python/tests/README.rst``
+
+^^^^^^^^^^^^^^^^
+Useful Arguments
+^^^^^^^^^^^^^^^^
+
+Some useful arguments to pytest include:
+
+* You can pass ``-n 0`` to turn off ``pytest-xdist``'s parallel test execution.
+  Sometimes for running just a small number of tests its startup time is longer
+  than the time it saves (this will vary from system to system), so this can
+  be helpful if you find yourself waiting on test runners to start a lot.
+* You can use ``-k`` to select a subset of tests to run. This matches on substrings
+  of the test names. For example ``-kfoo`` will only run tests that have "foo" as
+  a substring of their name. You can also use composite expressions here.
+  e.g. ``-k'foo and not bar'`` will run anything containing foo that doesn't
+  also contain bar.  `More information on how to select tests to run can be found
+  in the pytest documentation <https://docs.pytest.org/en/latest/usage.html#specifying-tests-selecting-tests>`__.
+
+

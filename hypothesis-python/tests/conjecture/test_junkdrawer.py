@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import inspect
 
@@ -122,7 +117,7 @@ def test_int_list_cannot_contain_negative():
 
 
 def test_int_list_can_contain_arbitrary_size():
-    n = 2 ** 65
+    n = 2**65
     assert list(IntList([n])) == [n]
 
 
@@ -144,7 +139,7 @@ def test_int_list_equality():
 
 def test_int_list_extend():
     x = IntList.of_length(3)
-    n = 2 ** 64 - 1
+    n = 2**64 - 1
     x.extend([n])
     assert list(x) == [0, 0, 0, n]
 

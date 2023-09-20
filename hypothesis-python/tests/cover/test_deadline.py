@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import time
 
@@ -19,7 +14,8 @@ import pytest
 
 from hypothesis import given, settings, strategies as st
 from hypothesis.errors import DeadlineExceeded, Flaky, InvalidArgument
-from tests.common.utils import assert_falsifying_output, capture_out, fails_with
+
+from tests.common.utils import assert_falsifying_output, fails_with
 
 
 def test_raises_deadline_on_slow_test():
@@ -113,11 +109,10 @@ def test_gives_a_deadline_specific_flaky_error_message():
             once[0] = False
             time.sleep(0.2)
 
-    with capture_out() as o:
-        with pytest.raises(Flaky):
-            slow_once()
-    assert "Unreliable test timing" in o.getvalue()
-    assert "took 2" in o.getvalue()
+    with pytest.raises(Flaky) as err:
+        slow_once()
+    assert "Unreliable test timing" in "\n".join(err.value.__notes__)
+    assert "took 2" in "\n".join(err.value.__notes__)
 
 
 @pytest.mark.parametrize("slow_strategy", [False, True])

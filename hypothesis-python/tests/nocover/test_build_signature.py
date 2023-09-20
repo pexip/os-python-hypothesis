@@ -1,22 +1,19 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from inspect import signature
 from typing import List, get_type_hints
 
 from hypothesis import given, strategies as st
+
+from tests.common.debug import find_any
 
 
 def use_this_signature(self, a: int, b: bool = None, *, x: float, y: str):
@@ -42,9 +39,21 @@ def test_builds_uses_signature_attribute(val):
     assert isinstance(val, Model)
 
 
-@given(st.from_type(Model))
+class ModelForFromType(Model):
+    def __init__(self, **kwargs):
+        assert set(kwargs) == {"a", "b", "x", "y"}
+        self.b = kwargs["b"]
+        assert self.b is None or isinstance(self.b, bool)
+
+
+@given(st.from_type(ModelForFromType))
 def test_from_type_uses_signature_attribute(val):
-    assert isinstance(val, Model)
+    assert isinstance(val, ModelForFromType)
+
+
+def test_from_type_can_be_default_or_annotation():
+    find_any(st.from_type(ModelForFromType), lambda m: m.b is None)
+    find_any(st.from_type(ModelForFromType), lambda m: isinstance(m.b, bool))
 
 
 def use_annotations(
@@ -93,3 +102,14 @@ class ModelWithBadAliasSignature:
 @given(st.builds(ModelWithBadAliasSignature))
 def test_build_with_non_types_in_signature(val):
     assert isinstance(val, ModelWithBadAliasSignature)
+
+
+class UnconventionalSignature:
+    def __init__(x: int = 0, self: bool = True):  # noqa: B902
+        assert not isinstance(x, int)
+        x.self = self
+
+
+def test_build_in_from_type_with_self_named_something_else():
+    find_any(st.from_type(UnconventionalSignature), lambda x: x.self is True)
+    find_any(st.from_type(UnconventionalSignature), lambda x: x.self is False)

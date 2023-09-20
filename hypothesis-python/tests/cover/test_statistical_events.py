@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import time
 import traceback
@@ -84,7 +79,7 @@ class Foo:
         seen.append(self)
         global counter
         counter += 1
-        return "COUNTER %d" % (counter,)
+        return f"COUNTER {counter}"
 
 
 def test_formats_are_evaluated_only_once():
@@ -142,7 +137,7 @@ def test_flaky_exit():
             if first[0]:
                 first[0] = False
                 print("Hi")
-                assert False
+                raise AssertionError
 
     stats = call_for_statistics(test)
     assert stats["stopped-because"] == "test was flaky"
@@ -157,6 +152,7 @@ def test_draw_time_percentage(draw_delay, test_delay):
     def s(draw):
         if draw_delay:
             time.sleep(0.05)
+        draw(st.integers())
 
     @given(s())
     def test(_):
@@ -259,3 +255,8 @@ def test_statistics_with_events_and_target():
     stats = describe_statistics(call_for_statistics(test))
     assert "- Events:" in stats
     assert "- Highest target score: " in stats
+
+
+@given(st.booleans())
+def test_event_with_non_weakrefable_keys(b):
+    event((b,))

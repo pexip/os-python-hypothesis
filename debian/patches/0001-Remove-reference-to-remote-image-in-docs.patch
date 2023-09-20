@@ -7,10 +7,10 @@ Subject: Remove reference to remote image in docs
  1 file changed, 2 deletions(-)
 
 diff --git a/hypothesis-python/docs/community.rst b/hypothesis-python/docs/community.rst
-index 57acbfe..23ed35d 100644
+index c35fe02..c87e758 100644
 --- a/hypothesis-python/docs/community.rst
 +++ b/hypothesis-python/docs/community.rst
-@@ -22,8 +22,6 @@ If you would like to cite Hypothesis, please consider `our suggested citation
+@@ -18,8 +18,6 @@ If you would like to cite Hypothesis, please consider :gh-file:`our suggested ci
  If you like repo badges, we suggest the following badge, which you can add
  with reStructuredText or Markdown, respectively:
  

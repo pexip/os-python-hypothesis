@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 """
 ----------------
@@ -28,15 +23,16 @@ You can use this strategy to make
 import datetime as dt
 
 import pytz
-from pytz.tzfile import StaticTzInfo
+from pytz.tzfile import StaticTzInfo  # type: ignore  # considered private by typeshed
 
-from hypothesis.strategies._internal import core as st
+from hypothesis import strategies as st
+from hypothesis.strategies._internal.utils import cacheable, defines_strategy
 
 __all__ = ["timezones"]
 
 
-@st.cacheable
-@st.defines_strategy()
+@cacheable
+@defines_strategy()
 def timezones() -> st.SearchStrategy[dt.tzinfo]:
     """Any timezone in the Olsen database, as a pytz tzinfo object.
 
@@ -48,7 +44,7 @@ def timezones() -> st.SearchStrategy[dt.tzinfo]:
     # Some timezones have always had a constant offset from UTC.  This makes
     # them simpler than timezones with daylight savings, and the smaller the
     # absolute offset the simpler they are.  Of course, UTC is even simpler!
-    static = [pytz.UTC]  # type: list
+    static: list = [pytz.UTC]
     static += sorted(
         (t for t in all_timezones if isinstance(t, StaticTzInfo)),
         key=lambda tz: abs(tz.utcoffset(dt.datetime(2000, 1, 1))),

@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import time
 
@@ -24,8 +19,16 @@ from hypothesis.errors import FailedHealthCheck, InvalidArgument
 from hypothesis.internal.compat import int_from_bytes
 from hypothesis.internal.conjecture.data import ConjectureData
 from hypothesis.internal.entropy import deterministic_PRNG
+from hypothesis.stateful import (
+    RuleBasedStateMachine,
+    initialize,
+    invariant,
+    rule,
+    run_state_machine_as_test,
+)
 from hypothesis.strategies._internal.lazy import LazyStrategy
 from hypothesis.strategies._internal.strategies import SearchStrategy
+
 from tests.common.utils import no_shrink
 
 HEALTH_CHECK_SETTINGS = settings(max_examples=11, database=None)
@@ -42,7 +45,7 @@ def test_slow_generation_fails_a_health_check():
 
 
 def test_slow_generation_inline_fails_a_health_check():
-    @settings(HEALTH_CHECK_SETTINGS, deadline=None)
+    @HEALTH_CHECK_SETTINGS
     @given(st.data())
     def test(data):
         data.draw(st.integers().map(lambda x: time.sleep(0.2)))
@@ -119,7 +122,7 @@ def test_filtering_most_things_fails_a_health_check():
 
 
 def test_large_data_will_fail_a_health_check():
-    @given(st.none() | st.binary(min_size=10 ** 5, max_size=10 ** 5))
+    @given(st.none() | st.binary(min_size=10**5, max_size=10**5))
     @settings(database=None)
     def test(x):
         pass
@@ -173,7 +176,7 @@ def test_large_base_example_fails_health_check():
     with pytest.raises(FailedHealthCheck) as exc:
         test()
 
-    assert exc.value.health_check == HealthCheck.large_base_example
+    assert str(HealthCheck.large_base_example) in str(exc.value)
 
 
 def test_example_that_shrinks_to_overrun_fails_health_check():
@@ -184,7 +187,7 @@ def test_example_that_shrinks_to_overrun_fails_health_check():
     with pytest.raises(FailedHealthCheck) as exc:
         test()
 
-    assert exc.value.health_check == HealthCheck.large_base_example
+    assert str(HealthCheck.large_base_example) in str(exc.value)
 
 
 def test_it_is_an_error_to_suppress_non_iterables():
@@ -214,7 +217,7 @@ def slow_init_integers(*args, **kwargs):
 def test_lazy_slow_initialization_issue_2108_regression(data):
     # Slow init in strategies wrapped in a LazyStrategy, inside an interactive draw,
     # should be attributed to drawing from the strategy (not the test function).
-    # Specificially, this used to fail with a DeadlineExceeded error.
+    # Specifically, this used to fail with a DeadlineExceeded error.
     data.draw(LazyStrategy(slow_init_integers, (), {}))
 
 
@@ -259,3 +262,33 @@ def test_does_not_trigger_health_check_when_most_examples_are_small(monkeypatch)
                 pass
 
             test()
+
+
+class ReturningRuleMachine(RuleBasedStateMachine):
+    @rule()
+    def r(self):
+        return "any non-None value"
+
+
+class ReturningInitializeMachine(RuleBasedStateMachine):
+    _ = rule()(lambda self: None)
+
+    @initialize()
+    def r(self):
+        return "any non-None value"
+
+
+class ReturningInvariantMachine(RuleBasedStateMachine):
+    _ = rule()(lambda self: None)
+
+    @invariant(check_during_init=True)
+    def r(self):
+        return "any non-None value"
+
+
+@pytest.mark.parametrize(
+    "cls", [ReturningRuleMachine, ReturningInitializeMachine, ReturningInvariantMachine]
+)
+def test_stateful_returnvalue_healthcheck(cls):
+    with pytest.raises(FailedHealthCheck):
+        run_state_machine_as_test(cls, settings=settings())

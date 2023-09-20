@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import time
 from unittest import TestCase
@@ -28,13 +23,10 @@ from hypothesis import (
     reporting,
     settings,
 )
-from hypothesis.errors import (
-    DeadlineExceeded,
-    HypothesisWarning,
-    InvalidArgument,
-    MultipleFailures,
-)
-from hypothesis.strategies import floats, integers, nothing, text
+from hypothesis.errors import DeadlineExceeded, HypothesisWarning, InvalidArgument
+from hypothesis.internal.compat import ExceptionGroup
+from hypothesis.strategies import floats, integers, text
+
 from tests.common.utils import assert_falsifying_output, capture_out
 
 
@@ -162,7 +154,7 @@ def test_prints_output_for_explicit_examples():
     def test_positive(x):
         assert x > 0
 
-    assert_falsifying_output(test_positive, x=-1)
+    assert_falsifying_output(test_positive, "Falsifying explicit", x=-1)
 
 
 def test_prints_verbose_output_for_explicit_examples():
@@ -173,7 +165,10 @@ def test_prints_verbose_output_for_explicit_examples():
         pass
 
     assert_falsifying_output(
-        test_always_passes, x="NOT AN INTEGER", example_type="Trying"
+        test_always_passes,
+        expected_exception=None,
+        example_type="Trying explicit",
+        x="NOT AN INTEGER",
     )
 
 
@@ -184,7 +179,7 @@ def test_captures_original_repr_of_example():
         x.append(1)
         assert not x
 
-    assert_falsifying_output(test_mutation, x=[])
+    assert_falsifying_output(test_mutation, "Falsifying explicit", x=[])
 
 
 def test_examples_are_tried_in_order():
@@ -194,7 +189,7 @@ def test_examples_are_tried_in_order():
     @settings(phases=[Phase.explicit])
     @example(x=3)
     def test(x):
-        print("x -> %d" % (x,))
+        print(f"x -> {x}")
 
     with capture_out() as out:
         with reporting.with_reporter(reporting.default):
@@ -208,17 +203,13 @@ def test_prints_note_in_failing_example():
     @example(x=43)
     @given(integers())
     def test(x):
-        note("x -> %d" % (x,))
+        note(f"x -> {x}")
         assert x == 42
 
-    with capture_out() as out:
-        with reporting.with_reporter(reporting.default):
-            with pytest.raises(AssertionError):
-                test()
-    v = out.getvalue()
-    print(v)
-    assert "x -> 43" in v
-    assert "x -> 42" not in v
+    with pytest.raises(AssertionError) as err:
+        test()
+    assert "x -> 43" in err.value.__notes__
+    assert "x -> 42" not in err.value.__notes__
 
 
 def test_must_agree_with_number_of_arguments():
@@ -234,7 +225,7 @@ def test_must_agree_with_number_of_arguments():
 def test_runs_deadline_for_examples():
     @example(10)
     @settings(phases=[Phase.explicit])
-    @given(nothing())
+    @given(integers())
     def test(x):
         time.sleep(10)
 
@@ -251,11 +242,11 @@ def test_unsatisfied_assumption_during_explicit_example(threshold, value):
     assume(value < threshold)
 
 
-@pytest.mark.parametrize("exc", [MultipleFailures, AssertionError])
+@pytest.mark.parametrize("exc", [ExceptionGroup, AssertionError])
 def test_multiple_example_reporting(exc):
     @example(1)
     @example(2)
-    @settings(report_multiple_bugs=exc is MultipleFailures, phases=[Phase.explicit])
+    @settings(report_multiple_bugs=exc is ExceptionGroup, phases=[Phase.explicit])
     @given(integers())
     def inner_test_multiple_failing_examples(x):
         assert x < 2
@@ -283,3 +274,11 @@ def test_helpful_message_when_example_fails_because_it_was_passed_a_strategy():
         assert isinstance(err.__cause__, AssertionError)
     else:
         raise NotImplementedError("should be unreachable")
+
+
+def test_stop_silently_dropping_examples_when_decorator_is_applied_to_itself():
+    def f():
+        pass
+
+    test = example("outer")(example("inner"))(f)
+    assert len(test.hypothesis_explicit_examples) == 2

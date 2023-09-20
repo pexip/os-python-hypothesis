@@ -31,18 +31,19 @@ intermediate steps of your test. That's where the ``note`` function comes in:
     ... def test_shuffle_is_noop(ls, r):
     ...     ls2 = list(ls)
     ...     r.shuffle(ls2)
-    ...     note("Shuffle: %r" % (ls2))
+    ...     note(f"Shuffle: {ls2!r}")
     ...     assert ls == ls2
     ...
     >>> try:
     ...     test_shuffle_is_noop()
     ... except AssertionError:
-    ...     print('ls != ls2')
+    ...     print("ls != ls2")
+    ...
     Falsifying example: test_shuffle_is_noop(ls=[0, 1], r=RandomWithSeed(1))
     Shuffle: [1, 0]
     ls != ls2
 
-The note is printed in the final run of the test in order to include any
+The note is printed for the minimal failing example of the test in order to include any
 additional information you might need in your test.
 
 
@@ -114,12 +115,12 @@ You can also mark custom events in a test using the ``event`` function:
 
 .. code:: python
 
-  from hypothesis import given, event, strategies as st
+  from hypothesis import event, given, strategies as st
 
 
   @given(st.integers().filter(lambda x: x % 2 == 0))
   def test_even_integers(i):
-      event("i mod 3 = %d" % (i % 3,))
+      event(f"i mod 3 = {i%3}")
 
 
 You will then see output like:
@@ -251,7 +252,7 @@ Here's what happens if we try to run this:
 
   @given(lists(integers()))
   def test_sum_is_positive(xs):
-      assume(len(xs) > 1)
+      assume(len(xs) > 10)
       assume(all(x > 0 for x in xs))
       print(xs)
       assert sum(xs) > 0
@@ -412,10 +413,25 @@ high confidence in the system being tested than random PBT.
 (`Löscher and Sagonas <http://proper.softlab.ntua.gr/Publications.html>`__)
 
 This is not *always* a good idea - for example calculating the search metric
-might take time better spent running more uniformly-random test cases - but
-Hypothesis has **experimental** support for targeted PBT you may wish to try.
+might take time better spent running more uniformly-random test cases, or your
+target metric might accidentally lead Hypothesis *away* from bugs - but if
+there is a natural metric like "floating-point error", "load factor" or
+"queue length", we encourage you to experiment with targeted testing.
 
 .. autofunction:: hypothesis.target
+
+.. code-block:: python
+
+  from hypothesis import given, strategies as st, target
+
+
+  @given(st.floats(0, 1e100), st.floats(0, 1e100), st.floats(0, 1e100))
+  def test_associativity_with_target(a, b, c):
+      ab_c = (a + b) + c
+      a_bc = a + (b + c)
+      difference = abs(ab_c - a_bc)
+      target(difference)  # Without this, the test almost always passes
+      assert difference < 2.0
 
 We recommend that users also skim the papers introducing targeted PBT;
 from `ISSTA 2017 <http://proper.softlab.ntua.gr/papers/issta2017.pdf>`__
@@ -554,17 +570,18 @@ This is based on introspection, *not* magic, and therefore has well-defined
 limits.
 
 :func:`~hypothesis.strategies.builds` will check the signature of the
-``target`` (using :func:`~python:inspect.getfullargspec`).
+``target`` (using :func:`~python:inspect.signature`).
 If there are required arguments with type annotations and
 no strategy was passed to :func:`~hypothesis.strategies.builds`,
 :func:`~hypothesis.strategies.from_type` is used to fill them in.
-You can also pass the special value :const:`hypothesis.infer` as a keyword
+You can also pass the value ``...`` (``Ellipsis``) as a keyword
 argument, to force this inference for arguments with a default value.
 
 .. code-block:: pycon
 
     >>> def func(a: int, b: str):
     ...     return [a, b]
+    ...
     >>> builds(func).example()
     [-6993, '']
 
@@ -572,20 +589,37 @@ argument, to force this inference for arguments with a default value.
 
 :func:`@given <hypothesis.given>` does not perform any implicit inference
 for required arguments, as this would break compatibility with pytest fixtures.
-:const:`~hypothesis.infer` can be used as a keyword argument to explicitly
-fill in an argument from its type annotation.
+``...`` (:obj:`python:Ellipsis`), can be used as a keyword argument to explicitly fill
+in an argument from its type annotation.  You can also use the ``hypothesis.infer``
+alias if writing a literal ``...`` seems too weird.
 
 .. code:: python
 
-    @given(a=infer)
+    @given(a=...)  # or @given(a=infer)
     def test(a: int):
         pass
 
 
     # is equivalent to
-    @given(a=integers())
+    @given(a=from_type(int))
     def test(a):
         pass
+
+
+``@given(...)`` can also be specified to fill all arguments from their type annotations.
+
+.. code:: python
+
+    @given(...)
+    def test(a: int, b: str):
+        pass
+
+
+    # is equivalent to
+    @given(a=..., b=...)
+    def test(a, b):
+        pass
+
 
 ~~~~~~~~~~~
 Limitations
@@ -597,10 +631,10 @@ Hypothesis does not inspect :pep:`484` type comments at runtime.  While
 will only work if you manually create the ``__annotations__`` attribute
 (e.g. by using ``@annotations(...)`` and ``@returns(...)`` decorators).
 
-The :mod:`python:typing` module is provisional and has a number of internal
-changes between Python 3.5.0 and 3.6.1, including at minor versions.  These
-are all supported on a best-effort basis, but you may encounter problems with
-an old version of the module.  Please report them to us, and consider
+The :mod:`python:typing` module changes between different Python releases,
+including at minor versions.  These
+are all supported on a best-effort basis,
+but you may encounter problems.  Please report them to us, and consider
 updating to a newer version of Python as a workaround.
 
 
@@ -681,10 +715,12 @@ providing extra information and convenient access to config options.
   :ref:`display test and data generation statistics <statistics>`.
 - ``pytest --hypothesis-profile=<profile name>`` can be used to
   :ref:`load a settings profile <settings_profiles>`.
-  ``pytest --hypothesis-verbosity=<level name>`` can be used to
+- ``pytest --hypothesis-verbosity=<level name>`` can be used to
   :ref:`override the current verbosity level <verbose-output>`.
 - ``pytest --hypothesis-seed=<an int>`` can be used to
   :ref:`reproduce a failure with a particular seed <reproducing-with-seed>`.
+- ``pytest --hypothesis-explain`` can be used to
+  :ref:`temporarily enable the explain phase <phases>`.
 
 Finally, all tests that are defined with Hypothesis automatically have
 ``@pytest.mark.hypothesis`` applied to them.  See :ref:`here for information
@@ -762,7 +798,7 @@ replay, shrink, deduplicate, and report whatever errors were discovered.
 
 - The :obj:`~hypothesis.settings.database` setting *is* used by fuzzing mode -
   adding failures to the database to be replayed when you next run your tests
-  is our preferred reporting mechanism and reponse to
+  is our preferred reporting mechanism and response to
   `the 'fuzzer taming' problem <https://blog.regehr.org/archives/925>`__.
 - The :obj:`~hypothesis.settings.verbosity` and
   :obj:`~hypothesis.settings.stateful_step_count` settings work as usual.
@@ -770,3 +806,38 @@ replay, shrink, deduplicate, and report whatever errors were discovered.
 The ``deadline``, ``derandomize``, ``max_examples``, ``phases``, ``print_blob``,
 ``report_multiple_bugs``, and ``suppress_health_check`` settings do not affect
 fuzzing mode.
+
+
+--------------------
+Thread-Safety Policy
+--------------------
+
+As discussed in :issue:`2719`, Hypothesis is not truly thread-safe and that's
+unlikely to change in the future.  This policy therefore describes what you
+*can* expect if you use Hypothesis with multiple threads.
+
+**Running tests in multiple processes**, e.g. with ``pytest -n auto``, is fully
+supported and we test this regularly in CI - thanks to process isolation, we only
+need to ensure that :class:`~hypothesis.database.DirectoryBasedExampleDatabase`
+can't tread on its own toes too badly.  If you find a bug here we will fix it ASAP.
+
+**Running separate tests in multiple threads** is not something we design or test
+for, and is not formally supported.  That said, anecdotally it does mostly work and
+we would like it to keep working - we accept reasonable patches and low-priority
+bug reports.  The main risks here are global state, shared caches, and cached strategies.
+
+**Using multiple threads within a single test** , or running a single test simultaneously
+in multiple threads, makes it pretty easy to trigger internal errors.  We usually accept
+patches for such issues unless readability or single-thread performance suffer.
+
+Hypothesis assumes that tests are single-threaded, or do a sufficiently-good job of
+pretending to be single-threaded.  Tests that use helper threads internally should be OK,
+but the user must be careful to ensure that test outcomes are still deterministic.
+In particular it counts as nondeterministic if helper-thread timing changes the sequence
+of dynamic draws using e.g. the :func:`~hypothesis.strategies.data`.
+
+Interacting with any Hypothesis APIs from helper threads might do weird/bad things,
+so avoid that too - we rely on thread-local variables in a few places, and haven't
+explicitly tested/audited how they respond to cross-thread API calls.  While
+:func:`~hypothesis.strategies.data` and equivalents are the most obvious danger,
+other APIs might also be subtly affected.

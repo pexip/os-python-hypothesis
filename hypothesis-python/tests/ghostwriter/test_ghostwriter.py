@@ -1,33 +1,48 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import ast
 import enum
 import json
 import re
+import socket
 import unittest
 import unittest.mock
 from decimal import Decimal
-from types import ModuleType
-from typing import Any, List, Sequence, Set, Union
+from pathlib import Path
+from textwrap import dedent
+from types import FunctionType, ModuleType
+from typing import (
+    Any,
+    FrozenSet,
+    KeysView,
+    List,
+    Match,
+    Pattern,
+    Sequence,
+    Set,
+    Sized,
+    Union,
+    ValuesView,
+)
 
+import attr
+import click
 import pytest
 
-from hypothesis.errors import InvalidArgument, MultipleFailures, Unsatisfiable
-from hypothesis.extra import ghostwriter
-from hypothesis.strategies import from_type, just
+from hypothesis import assume
+from hypothesis.errors import InvalidArgument, Unsatisfiable
+from hypothesis.extra import cli, ghostwriter
+from hypothesis.internal.compat import BaseExceptionGroup
+from hypothesis.strategies import builds, from_type, just, lists
+from hypothesis.strategies._internal.lazy import LazyStrategy
 
 varied_excepts = pytest.mark.parametrize("ex", [(), ValueError, (TypeError, re.error)])
 
@@ -37,7 +52,11 @@ def get_test_function(source_code):
     # Note that this also tests that the module is syntatically-valid,
     # AND free from undefined names, import problems, and so on.
     namespace = {}
-    exec(source_code, namespace)
+    try:
+        exec(source_code, namespace)
+    except Exception:
+        print(f"************\n{source_code}\n************")
+        raise
     tests = [
         v
         for k, v in namespace.items()
@@ -71,7 +90,7 @@ def test_strategies_with_invalid_syntax_repr_as_nothing():
 
     s = just(NoRepr())
     assert repr(s) == f"just({msg})"
-    assert ghostwriter._valid_syntax_repr(s) == "nothing()"
+    assert ghostwriter._valid_syntax_repr(s)[1] == "nothing()"
 
 
 class AnEnum(enum.Enum):
@@ -119,7 +138,40 @@ def non_resolvable_arg(x: NotResolvable):
 def test_flattens_one_of_repr():
     strat = from_type(Union[int, Sequence[int]])
     assert repr(strat).count("one_of(") > 1
-    assert ghostwriter._valid_syntax_repr(strat).count("one_of(") == 1
+    assert ghostwriter._valid_syntax_repr(strat)[1].count("one_of(") == 1
+
+
+def takes_keys(x: KeysView[int]) -> None:
+    pass
+
+
+def takes_values(x: ValuesView[int]) -> None:
+    pass
+
+
+def takes_match(x: Match[bytes]) -> None:
+    pass
+
+
+def takes_pattern(x: Pattern[str]) -> None:
+    pass
+
+
+def takes_sized(x: Sized) -> None:
+    pass
+
+
+def takes_frozensets(a: FrozenSet[int], b: FrozenSet[int]) -> None:
+    pass
+
+
+@attr.s()
+class Foo:
+    foo: str = attr.ib()
+
+
+def takes_attrs_class(x: Foo) -> None:
+    pass
 
 
 @varied_excepts
@@ -135,11 +187,30 @@ def test_flattens_one_of_repr():
         annotated_any,
         space_in_name,
         non_resolvable_arg,
+        takes_keys,
+        takes_values,
+        takes_match,
+        takes_pattern,
+        takes_sized,
+        takes_frozensets,
+        takes_attrs_class,
     ],
 )
 def test_ghostwriter_fuzz(func, ex):
     source_code = ghostwriter.fuzz(func, except_=ex)
     get_test_function(source_code)
+
+
+def test_socket_module():
+    source_code = ghostwriter.magic(socket)
+    exec(source_code, {})
+
+
+def test_binary_op_also_handles_frozensets():
+    # Using str.replace in a loop would convert `frozensets()` into
+    # `st.frozenst.sets()` instead of `st.frozensets()`; fixed with re.sub.
+    source_code = ghostwriter.binary_operation(takes_frozensets)
+    exec(source_code, {})
 
 
 @varied_excepts
@@ -191,6 +262,34 @@ def test_invalid_func_inputs(gw, args):
         gw(*args)
 
 
+class A:
+    @classmethod
+    def to_json(cls, obj: Union[dict, list]) -> str:
+        return json.dumps(obj)
+
+    @classmethod
+    def from_json(cls, obj: str) -> Union[dict, list]:
+        return json.loads(obj)
+
+    @staticmethod
+    def static_sorter(seq: Sequence[int]) -> List[int]:
+        return sorted(seq)
+
+
+@pytest.mark.parametrize(
+    "gw,args",
+    [
+        (ghostwriter.fuzz, [A.static_sorter]),
+        (ghostwriter.idempotent, [A.static_sorter]),
+        (ghostwriter.roundtrip, [A.to_json, A.from_json]),
+        (ghostwriter.equivalent, [A.to_json, json.dumps]),
+    ],
+)
+def test_class_methods_inputs(gw, args):
+    source_code = gw(*args)
+    get_test_function(source_code)()
+
+
 def test_run_ghostwriter_fuzz():
     # Our strategy-guessing code works for all the arguments to sorted,
     # and we handle positional-only arguments in calls correctly too.
@@ -216,7 +315,12 @@ class MyError(UnicodeDecodeError):
 )
 def test_exception_deduplication(exceptions, output):
     _, body = ghostwriter._make_test_body(
-        lambda: None, ghost="", test_body="pass", except_=exceptions, style="pytest"
+        lambda: None,
+        ghost="",
+        test_body="pass",
+        except_=exceptions,
+        style="pytest",
+        annotate=False,
     )
     assert f"except {output}:" in body
 
@@ -239,7 +343,7 @@ def test_run_ghostwriter_roundtrip():
     )
     try:
         get_test_function(source_code)()
-    except (AssertionError, ValueError, MultipleFailures):
+    except (AssertionError, ValueError, BaseExceptionGroup):
         pass
 
     # Finally, restricting ourselves to finite floats makes the test pass!
@@ -290,3 +394,120 @@ def test_unrepr_identity_elem():
     # and also works with explicit identity element
     source_code = ghostwriter.binary_operation(compose_types, identity=type)
     exec(source_code, {})
+
+
+@pytest.mark.parametrize(
+    "strategy, imports",
+    # The specifics don't matter much here; we're just demonstrating that
+    # we can walk the strategy and collect all the objects to import.
+    [
+        # Lazy from_type() is handled without being unwrapped
+        (LazyStrategy(from_type, (enum.Enum,), {}), {("enum", "Enum")}),
+        # Mapped, filtered, and flatmapped check both sides of the method
+        (
+            builds(enum.Enum).map(Decimal),
+            {("enum", "Enum"), ("decimal", "Decimal")},
+        ),
+        (
+            builds(enum.Enum).flatmap(Decimal),
+            {("enum", "Enum"), ("decimal", "Decimal")},
+        ),
+        (
+            builds(enum.Enum).filter(Decimal).filter(re.compile),
+            {("enum", "Enum"), ("decimal", "Decimal"), ("re", "compile")},
+        ),
+        # one_of() strategies recurse into all the branches
+        (
+            builds(enum.Enum) | builds(Decimal) | builds(re.compile),
+            {("enum", "Enum"), ("decimal", "Decimal"), ("re", "compile")},
+        ),
+        # and builds() checks the arguments as well as the target
+        (
+            builds(enum.Enum, builds(Decimal), kw=builds(re.compile)),
+            {("enum", "Enum"), ("decimal", "Decimal"), ("re", "compile")},
+        ),
+        # lists recurse on imports
+        (
+            lists(builds(Decimal)),
+            {("decimal", "Decimal")},
+        ),
+    ],
+)
+def test_get_imports_for_strategy(strategy, imports):
+    assert ghostwriter._imports_for_strategy(strategy) == imports
+
+
+@pytest.fixture
+def temp_script_file():
+    """Fixture to yield a Path to a temporary file in the local directory. File name will end
+    in .py and will include an importable function.
+    """
+    p = Path("my_temp_script.py")
+    if p.exists():
+        raise FileExistsError(f"Did not expect {p} to exist during testing")
+    p.write_text(
+        dedent(
+            """
+            def say_hello():
+                print("Hello world!")
+            """
+        )
+    )
+    yield p
+    p.unlink()
+
+
+@pytest.fixture
+def temp_script_file_with_py_function():
+    """Fixture to yield a Path to a temporary file in the local directory. File name will end
+    in .py and will include an importable function named "py"
+    """
+    p = Path("my_temp_script_with_py_function.py")
+    if p.exists():
+        raise FileExistsError(f"Did not expect {p} to exist during testing")
+    p.write_text(
+        dedent(
+            """
+            def py():
+                print('A function named "py" has been called')
+            """
+        )
+    )
+    yield p
+    p.unlink()
+
+
+def test_obj_name(temp_script_file, temp_script_file_with_py_function):
+    # Module paths (strings including a "/") should raise a meaningful UsageError
+    with pytest.raises(click.exceptions.UsageError) as e:
+        cli.obj_name("mydirectory/myscript.py")
+    assert e.match(
+        "Remember that the ghostwriter should be passed the name of a module, not a path."
+    )
+    # Windows paths (strings including a "\") should also raise a meaningful UsageError
+    with pytest.raises(click.exceptions.UsageError) as e:
+        cli.obj_name("mydirectory\\myscript.py")
+    assert e.match(
+        "Remember that the ghostwriter should be passed the name of a module, not a path."
+    )
+    # File names of modules (strings ending in ".py") should raise a meaningful UsageError
+    with pytest.raises(click.exceptions.UsageError) as e:
+        cli.obj_name("myscript.py")
+    assert e.match(
+        "Remember that the ghostwriter should be passed the name of a module, not a file."
+    )
+    # File names of modules (strings ending in ".py") that exist should get a suggestion
+    with pytest.raises(click.exceptions.UsageError) as e:
+        cli.obj_name(str(temp_script_file))
+    assert e.match(
+        "Remember that the ghostwriter should be passed the name of a module, not a file."
+        + f"\n\tTry: hypothesis write {temp_script_file.stem}"
+    )
+    # File names of modules (strings ending in ".py") that define a py function should succeed
+    assert isinstance(
+        cli.obj_name(str(temp_script_file_with_py_function)), FunctionType
+    )
+
+
+def test_gets_public_location_not_impl_location():
+    assert ghostwriter._get_module(assume) == "hypothesis"  # not "hypothesis.control"

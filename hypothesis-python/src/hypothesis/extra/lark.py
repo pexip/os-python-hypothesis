@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 """
 ----------------
@@ -27,25 +22,20 @@ Lark already `supports loading grammars
 <https://lark-parser.readthedocs.io/en/latest/nearley.html>`_
 from `nearley.js <https://nearley.js.org/>`_, so you may not have to write
 your own at all.
-
-Note that as Lark is at version 0.x, this module *may* break API compatibility
-in minor releases if supporting the latest version of Lark would otherwise be
-infeasible.  We may also be quite aggressive in bumping the minimum version of
-Lark, unless someone volunteers to either fund or do the maintainence.
 """
 
-from inspect import getfullargspec
+from inspect import signature
 from typing import Dict, Optional
 
 import attr
 import lark
 from lark.grammar import NonTerminal, Terminal
 
+from hypothesis import strategies as st
 from hypothesis.errors import InvalidArgument
 from hypothesis.internal.conjecture.utils import calc_label_from_name
-from hypothesis.internal.reflection import deprecated_posargs
 from hypothesis.internal.validation import check_type
-from hypothesis.strategies._internal import SearchStrategy, core as st
+from hypothesis.strategies._internal.utils import cacheable, defines_strategy
 
 __all__ = ["from_lark"]
 
@@ -78,7 +68,7 @@ def get_terminal_names(terminals, rules, ignore_names):
     return names
 
 
-class LarkStrategy(SearchStrategy):
+class LarkStrategy(st.SearchStrategy):
     """Low-level strategy implementation wrapping a Lark grammar.
 
     See ``from_lark`` for details.
@@ -95,7 +85,7 @@ class LarkStrategy(SearchStrategy):
         # This is a total hack, but working around the changes is a nicer user
         # experience than breaking for anyone who doesn't instantly update their
         # installation of Lark alongside Hypothesis.
-        compile_args = getfullargspec(grammar.grammar.compile).args
+        compile_args = signature(grammar.grammar.compile).parameters
         if "terminals_to_keep" in compile_args:
             terminals, rules, ignore_names = grammar.grammar.compile(start, ())
         elif "start" in compile_args:  # pragma: no cover
@@ -128,8 +118,8 @@ class LarkStrategy(SearchStrategy):
         if unknown_explicit:
             raise InvalidArgument(
                 "The following arguments were passed as explicit_strategies, "
-                "but there is no such terminal production in this grammar: %r"
-                % (sorted(unknown_explicit),)
+                "but there is no such terminal production in this grammar: "
+                + repr(sorted(unknown_explicit))
             )
         self.terminal_strategies.update(explicit)
 
@@ -158,7 +148,7 @@ class LarkStrategy(SearchStrategy):
             return self.__rule_labels[name]
         except KeyError:
             return self.__rule_labels.setdefault(
-                name, calc_label_from_name("LARK:%s" % (name,))
+                name, calc_label_from_name(f"LARK:{name}")
             )
 
     def draw_symbol(self, data, symbol, draw_state):
@@ -171,7 +161,7 @@ class LarkStrategy(SearchStrategy):
                     "use of %%declare unless you pass `explicit`, a dict of "
                     'names-to-strategies, such as `{%r: st.just("")}`'
                     % (symbol.name, symbol.name)
-                )
+                ) from None
             draw_state.result.append(data.draw(strategy))
         else:
             assert isinstance(symbol, NonTerminal)
@@ -199,9 +189,8 @@ def check_explicit(name):
     return inner
 
 
-@st.cacheable
-@st.defines_strategy(force_reusable_values=True)
-@deprecated_posargs
+@cacheable
+@defines_strategy(force_reusable_values=True)
 def from_lark(
     grammar: lark.lark.Lark,
     *,
@@ -237,7 +226,7 @@ def from_lark(
     else:
         check_type(dict, explicit, "explicit")
         explicit = {
-            k: v.map(check_explicit("explicit[%r]=%r" % (k, v)))
+            k: v.map(check_explicit(f"explicit[{k!r}]={v!r}"))
             for k, v in explicit.items()
         }
     return LarkStrategy(grammar, start, explicit)

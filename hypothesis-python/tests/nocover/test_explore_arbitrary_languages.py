@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import random
 
@@ -75,6 +70,12 @@ branches = st.builds(Branch, bits=st.integers(1, 64))
 writes = st.builds(Write, value=st.binary(min_size=1), child=nodes)
 
 
+# Remember what the default phases are with no test running, so that we can
+# run an outer test with non-default phases and then restore the defaults for
+# the inner test.
+_default_phases = settings.default.phases
+
+
 def run_language_test_for(root, data, seed):
     random.seed(seed)
 
@@ -106,7 +107,9 @@ def run_language_test_for(root, data, seed):
             database=None,
             suppress_health_check=HealthCheck.all(),
             verbosity=Verbosity.quiet,
-            phases=list(Phase),
+            # Restore the global default phases, so that we don't inherit the
+            # phases setting from the outer test.
+            phases=_default_phases,
         ),
     )
     try:
@@ -120,12 +123,12 @@ def run_language_test_for(root, data, seed):
 @settings(
     suppress_health_check=HealthCheck.all(),
     deadline=None,
-    phases=set(Phase) - {Phase.shrink},
+    phases=set(settings.default.phases) - {Phase.shrink},
 )
 @given(st.data())
 def test_explore_an_arbitrary_language(data):
     root = data.draw(writes | branches)
-    seed = data.draw(st.integers(0, 2 ** 64 - 1))
+    seed = data.draw(st.integers(0, 2**64 - 1))
     run_language_test_for(root, data, seed)
 
 

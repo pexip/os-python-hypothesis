@@ -1,23 +1,19 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import math
 import sys
 import time
 from collections import defaultdict
 from contextlib import contextmanager
+from datetime import timedelta
 from enum import Enum
 from random import Random, getrandbits
 from weakref import WeakKeyDictionary
@@ -26,6 +22,7 @@ import attr
 
 from hypothesis import HealthCheck, Phase, Verbosity, settings as Settings
 from hypothesis._settings import local_settings
+from hypothesis.errors import StopTest
 from hypothesis.internal.cache import LRUReusedCache
 from hypothesis.internal.compat import ceil, int_from_bytes
 from hypothesis.internal.conjecture.data import (
@@ -34,7 +31,6 @@ from hypothesis.internal.conjecture.data import (
     DataObserver,
     Overrun,
     Status,
-    StopTest,
 )
 from hypothesis.internal.conjecture.datatree import (
     DataTree,
@@ -46,11 +42,6 @@ from hypothesis.internal.conjecture.pareto import NO_SCORE, ParetoFront, ParetoO
 from hypothesis.internal.conjecture.shrinker import Shrinker, sort_key
 from hypothesis.internal.healthcheck import fail_health_check
 from hypothesis.reporting import base_report, report
-
-# Tell pytest to omit the body of this module from tracebacks
-# https://docs.pytest.org/en/latest/example/simple.html#writing-well-integrated-assertion-helpers
-__tracebackhide__ = True
-
 
 MAX_SHRINKS = 500
 CACHE_SIZE = 10000
@@ -73,7 +64,7 @@ class ExitReason(Enum):
         "settings.max_examples={s.max_examples}, "
         "but < 10% of examples satisfied assumptions"
     )
-    max_shrinks = "shrunk example %s times" % (MAX_SHRINKS,)
+    max_shrinks = f"shrunk example {MAX_SHRINKS} times"
     finished = "nothing left to do"
     flaky = "test was flaky"
     very_slow_shrinking = "shrinking was very slow"
@@ -298,12 +289,12 @@ class ConjectureRunner:
         ):
             # See https://github.com/HypothesisWorks/hypothesis/issues/2340
             report(
-                "WARNING: Hypothesis has spent more than five minutes working to shrink "
-                "a failing example, and stopped because it is making very slow "
-                "progress.  When you re-run your tests, shrinking will resume and "
-                "may take this long before aborting again.\n"
-                "PLEASE REPORT THIS if you can provide a reproducing example, so that "
-                "we can improve shrinking performance for everyone."
+                "WARNING: Hypothesis has spent more than five minutes working to shrink"
+                " a failing example, and stopped because it is making very slow"
+                " progress.  When you re-run your tests, shrinking will resume and may"
+                " take this long before aborting again.\nPLEASE REPORT THIS if you can"
+                " provide a reproducing example, so that we can improve shrinking"
+                " performance for everyone."
             )
             self.exit_with(ExitReason.very_slow_shrinking)
 
@@ -374,51 +365,39 @@ class ConjectureRunner:
         if state.overrun_examples == max_overrun_draws:
             fail_health_check(
                 self.settings,
-                (
-                    "Examples routinely exceeded the max allowable size. "
-                    "(%d examples overran while generating %d valid ones)"
-                    ". Generating examples this large will usually lead to"
-                    " bad results. You could try setting max_size parameters "
-                    "on your collections and turning "
-                    "max_leaves down on recursive() calls."
-                )
-                % (state.overrun_examples, state.valid_examples),
+                "Examples routinely exceeded the max allowable size. "
+                f"({state.overrun_examples} examples overran while generating "
+                f"{state.valid_examples} valid ones). Generating examples this large "
+                "will usually lead to bad results. You could try setting max_size "
+                "parameters on your collections and turning max_leaves down on "
+                "recursive() calls.",
                 HealthCheck.data_too_large,
             )
         if state.invalid_examples == max_invalid_draws:
             fail_health_check(
                 self.settings,
-                (
-                    "It looks like your strategy is filtering out a lot "
-                    "of data. Health check found %d filtered examples but "
-                    "only %d good ones. This will make your tests much "
-                    "slower, and also will probably distort the data "
-                    "generation quite a lot. You should adapt your "
-                    "strategy to filter less. This can also be caused by "
-                    "a low max_leaves parameter in recursive() calls"
-                )
-                % (state.invalid_examples, state.valid_examples),
+                "It looks like your strategy is filtering out a lot of data. Health "
+                f"check found {state.invalid_examples} filtered examples but only "
+                f"{state.valid_examples} good ones. This will make your tests much "
+                "slower, and also will probably distort the data generation quite a "
+                "lot. You should adapt your strategy to filter less. This can also "
+                "be caused by a low max_leaves parameter in recursive() calls",
                 HealthCheck.filter_too_much,
             )
 
         draw_time = sum(state.draw_times)
 
-        if draw_time > 1.0:
+        # Allow at least the greater of one second or 5x the deadline.  If deadline
+        # is None, allow 30s - the user can disable the healthcheck too if desired.
+        draw_time_limit = 5 * (self.settings.deadline or timedelta(seconds=6))
+        if draw_time > max(1.0, draw_time_limit.total_seconds()):
             fail_health_check(
                 self.settings,
-                (
-                    "Data generation is extremely slow: Only produced "
-                    "%d valid examples in %.2f seconds (%d invalid ones "
-                    "and %d exceeded maximum size). Try decreasing "
-                    "size of the data you're generating (with e.g."
-                    "max_size or max_leaves parameters)."
-                )
-                % (
-                    state.valid_examples,
-                    draw_time,
-                    state.invalid_examples,
-                    state.overrun_examples,
-                ),
+                "Data generation is extremely slow: Only produced "
+                f"{state.valid_examples} valid examples in {draw_time:.2f} seconds "
+                f"({state.invalid_examples} invalid ones and {state.overrun_examples} "
+                "exceeded maximum size). Try decreasing size of the data you're "
+                "generating (with e.g. max_size or max_leaves parameters).",
                 HealthCheck.too_slow,
             )
 
@@ -485,11 +464,9 @@ class ConjectureRunner:
         status = repr(data.status)
 
         if data.status == Status.INTERESTING:
-            status = "%s (%r)" % (status, data.interesting_origin)
+            status = f"{status} ({data.interesting_origin!r})"
 
-        self.debug(
-            "%d bytes %r -> %s, %s" % (data.index, stack[0], status, data.output)
-        )
+        self.debug(f"{data.index} bytes {stack[0]!r} -> {status}, {data.output}")
 
     def run(self):
         with local_settings(self.settings):
@@ -584,7 +561,7 @@ class ConjectureRunner:
         self.statistics["stopped-because"] = reason.describe(self.settings)
         if self.best_observed_targets:
             self.statistics["targets"] = dict(self.best_observed_targets)
-        self.debug("exit_with(%s)" % (reason.name,))
+        self.debug(f"exit_with({reason.name})")
         self.exit_reason = reason
         raise RunIsComplete()
 
@@ -604,8 +581,12 @@ class ConjectureRunner:
         # the run.
         if not self.interesting_examples:
             return True
+        # Users who disable shrinking probably want to exit as fast as possible.
         # If we've found a bug and won't report more than one, stop looking.
-        elif not self.settings.report_multiple_bugs:
+        elif (
+            Phase.shrink not in self.settings.phases
+            or not self.settings.report_multiple_bugs
+        ):
             return False
         assert self.first_bug_found_at <= self.last_bug_found_at <= self.call_count
         # Otherwise, keep searching for between ten and 'a heuristic' calls.
@@ -801,9 +782,9 @@ class ConjectureRunner:
 
                 group = self.random.choice(groups)
 
-                ex1, ex2 = [
+                ex1, ex2 = (
                     data.examples[i] for i in sorted(self.random.sample(group, 2))
-                ]
+                )
                 assert ex1.end <= ex2.start
 
                 replacements = [data.buffer[e.start : e.end] for e in [ex1, ex2]]
@@ -955,7 +936,7 @@ class ConjectureRunner:
                 ),
                 key=lambda kv: (sort_key(kv[1].buffer), sort_key(repr(kv[0]))),
             )
-            self.debug("Shrinking %r" % (target,))
+            self.debug(f"Shrinking {target!r}")
 
             if not self.settings.report_multiple_bugs:
                 # If multi-bug reporting is disabled, we shrink our currently-minimal
@@ -1086,10 +1067,13 @@ class ConjectureRunner:
             return event
         try:
             return self.events_to_strings[event]
-        except KeyError:
+        except (KeyError, TypeError):
             pass
         result = str(event)
-        self.events_to_strings[event] = result
+        try:
+            self.events_to_strings[event] = result
+        except TypeError:
+            pass
         return result
 
 

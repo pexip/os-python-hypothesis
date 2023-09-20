@@ -1,0 +1,22 @@
+From: Tristan Seligmann <mithrandi@debian.org>
+Date: Mon, 3 Aug 2020 15:12:37 +0200
+Subject: Disable hoverxref; not in Debian.
+
+---
+ hypothesis-python/docs/conf.py | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/hypothesis-python/docs/conf.py b/hypothesis-python/docs/conf.py
+index 5a1d3ed..d7495aa 100644
+--- a/hypothesis-python/docs/conf.py
++++ b/hypothesis-python/docs/conf.py
+@@ -26,9 +26,6 @@ extensions = [
+     "sphinx.ext.extlinks",
+     "sphinx.ext.viewcode",
+     "sphinx.ext.intersphinx",
+-    "hoverxref.extension",
+-    "sphinx_codeautolink",
+-    "sphinx_selective_exclude.eager_only",
+ ]
+ 
+ templates_path = ["_templates"]

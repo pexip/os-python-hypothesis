@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import os
 import re
@@ -34,6 +29,9 @@ BASE_DIR = HYPOTHESIS_PYTHON
 
 PYTHON_SRC = os.path.join(HYPOTHESIS_PYTHON, "src")
 PYTHON_TESTS = os.path.join(HYPOTHESIS_PYTHON, "tests")
+DOMAINS_LIST = os.path.join(
+    PYTHON_SRC, "hypothesis", "vendor", "tlds-alpha-by-domain.txt"
+)
 
 RELEASE_FILE = os.path.join(HYPOTHESIS_PYTHON, "RELEASE.rst")
 
@@ -82,9 +80,9 @@ def build_docs(builder="html"):
     )
 
 
-CHANGELOG_ANCHOR = re.compile(r"^\.\. _v\d+\.\d+\.\d+:$")
-CHANGELOG_BORDER = re.compile(r"^-+$")
-CHANGELOG_HEADER = re.compile(r"^\d+\.\d+\.\d+ - \d\d\d\d-\d\d-\d\d$")
+CHANGELOG_ANCHOR = re.compile(r"^\.\. _v\d+\.\d+\.\d+:$", flags=re.MULTILINE)
+CHANGELOG_BORDER = re.compile(r"^-+$", flags=re.MULTILINE)
+CHANGELOG_HEADER = re.compile(r"^\d+\.\d+\.\d+ - \d\d\d\d-\d\d-\d\d$", flags=re.M)
 
 
 def update_changelog_and_version():
@@ -127,7 +125,7 @@ def update_changelog_and_version():
     new_changelog_parts = [
         beginning.strip(),
         "",
-        ".. _v%s:" % (new_version_string),
+        f".. _v{new_version_string}:",
         "",
         border_for_new_version,
         heading_for_new_version,
@@ -181,8 +179,7 @@ def upload_distribution():
             "twine",
             "upload",
             "--skip-existing",
-            "--config-file",
-            tools.PYPIRC,
+            "--username=__token__",
             os.path.join(DIST, "*"),
         ]
     )
@@ -194,10 +191,11 @@ def upload_distribution():
     with open(textfile) as f:
         lines = f.readlines()
     entries = [i for i, l in enumerate(lines) if CHANGELOG_HEADER.match(l)]
-    changelog_body = "".join(lines[entries[0] + 2 : entries[1]]).strip() + (
-        "\n\n*[The canonical version of these notes (with links) is on readthedocs.]"
-        "(https://hypothesis.readthedocs.io/en/latest/changes.html#v%s)*"
-        % (current_version().replace(".", "-"),)
+    anchor = current_version().replace(".", "-")
+    changelog_body = (
+        "".join(lines[entries[0] + 2 : entries[1]]).strip()
+        + "\n\n*[The canonical version of these notes (with links) is on readthedocs.]"
+        f"(https://hypothesis.readthedocs.io/en/latest/changes.html#v{anchor})*"
     )
 
     # Create a GitHub release, to trigger Zenodo DOI minting.  See
@@ -210,17 +208,7 @@ def upload_distribution():
             "body": changelog_body,
         },
         timeout=120,  # seconds
-        # Scoped personal access token, stored in Travis environ variable
-        auth=("Zac-HD", os.environ["Zac_release_token"]),
-    ).raise_for_status()
-
-    # Post the release notes to Tidelift too - see https://tidelift.com/docs/api
-    requests.post(
-        "https://api.tidelift.com/external-api/lifting/pypi/hypothesis/release-notes/"
-        + current_version(),
-        json={"body": changelog_body},
-        headers={"Authorization": "Bearer {}".format(os.environ["TIDELIFT_API_TOKEN"])},
-        timeout=120,  # seconds
+        auth=("Zac-HD", os.environ["GH_TOKEN"]),
     ).raise_for_status()
 
 
@@ -249,3 +237,16 @@ def latest_version():
 
 def tag_name():
     return PYTHON_TAG_PREFIX + __version__
+
+
+def get_autoupdate_message(domainlist_changed: bool) -> str:
+    if domainlist_changed:
+        return (
+            "This patch updates our vendored `list of top-level domains "
+            "<https://www.iana.org/domains/root/db>`__,\nwhich is used by the "
+            "provisional :func:`~hypothesis.provisional.domains` strategy.\n"
+        )
+    return (
+        "This patch updates our autoformatting tools, "
+        "improving our code style without any API changes."
+    )

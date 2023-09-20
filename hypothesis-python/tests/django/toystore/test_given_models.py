@@ -1,31 +1,23 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import datetime as dt
+import sys
 from uuid import UUID
 
 from django.conf import settings as django_settings
 from django.contrib.auth.models import User
 
-from hypothesis import HealthCheck, assume, given, infer, settings
+from hypothesis import HealthCheck, assume, given, settings
 from hypothesis.control import reject
-from hypothesis.errors import (
-    HypothesisDeprecationWarning,
-    HypothesisException,
-    InvalidArgument,
-)
+from hypothesis.errors import HypothesisException, InvalidArgument
 from hypothesis.extra.django import (
     TestCase,
     TransactionTestCase,
@@ -34,6 +26,7 @@ from hypothesis.extra.django import (
 )
 from hypothesis.internal.conjecture.data import ConjectureData
 from hypothesis.strategies import binary, just, lists
+
 from tests.django.toystore.models import (
     Car,
     Company,
@@ -118,11 +111,11 @@ class TestGetsBasicModels(TestCase):
         mc = from_model(MandatoryComputed, company=from_model(Company))
         self.assertRaises(RuntimeError, mc.example)
 
-    @given(from_model(CustomishDefault, customish=infer))
+    @given(from_model(CustomishDefault, customish=...))
     def test_customish_default_overridden_by_infer(self, x):
         assert x.customish == "a"
 
-    @given(from_model(CustomishDefault, customish=infer))
+    @given(from_model(CustomishDefault, customish=...))
     def test_customish_infer_uses_registered_instead_of_default(self, x):
         assert x.customish == "a"
 
@@ -199,9 +192,12 @@ class TestPosOnlyArg(TestCase):
     def test_user_issue_2369_regression(self, val):
         pass
 
-    def test_from_model_argspec(self):
-        self.assertRaises(TypeError, from_model().example)
-        self.assertRaises(TypeError, from_model(Car, None).example)
-        self.assertWarns(
-            HypothesisDeprecationWarning, from_model(model=Customer).example
-        )
+    def test_from_model_signature(self):
+        if sys.version_info[:2] <= (3, 7):
+            self.assertRaises(TypeError, from_model().example)
+            self.assertRaises(TypeError, from_model(Car, None).example)
+            self.assertRaises(TypeError, from_model(model=Customer).example)
+        else:
+            self.assertRaises(TypeError, from_model)
+            self.assertRaises(TypeError, from_model, Car, None)
+            self.assertRaises(TypeError, from_model, model=Customer)

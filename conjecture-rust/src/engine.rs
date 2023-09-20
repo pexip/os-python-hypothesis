@@ -1,19 +1,45 @@
 // Core module that provides a main execution loop and
 // the API that can be used to get test data from it.
 
-use rand::{ChaChaRng, Rng, SeedableRng};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use rand::{ChaChaRng, Rng, SeedableRng};
 
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
+use std::convert::TryFrom;
+use std::io;
 use std::mem;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::thread;
-use std::io;
 
-use data::{DataSource, DataStream, Status, TestResult};
-use database::BoxedDatabase;
-use intminimize::minimize_integer;
+use crate::data::{DataSource, DataStreamSlice, Status, TestResult};
+use crate::database::BoxedDatabase;
+use crate::intminimize::minimize_integer;
+
+#[derive(Debug, PartialEq)]
+pub enum Phase {
+    Shrink,
+}
+
+impl Phase {
+    pub fn all() -> Vec<Self> {
+        vec![Phase::Shrink]
+    }
+}
+
+impl TryFrom<&str> for Phase {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, String> {
+        match value {
+            "shrink" => Ok(Phase::Shrink),
+            _ => Err(format!(
+                "Cannot convert to Phase: {} is not a valid Phase",
+                value
+            )),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 enum LoopExitReason {
@@ -36,6 +62,7 @@ struct MainGenerationLoop {
     sender: SyncSender<LoopCommand>,
     max_examples: u64,
     random: ChaChaRng,
+    phases: Vec<Phase>,
 
     best_example: Option<TestResult>,
     minimized_examples: HashMap<u64, TestResult>,
@@ -65,20 +92,17 @@ impl MainGenerationLoop {
         }
     }
 
-    fn run_previous_examples(&mut self) -> Result<(), LoopExitReason>{
+    fn run_previous_examples(&mut self) -> Result<(), LoopExitReason> {
         for v in self.database.fetch(&self.name) {
             let result = self.execute(DataSource::from_vec(bytes_to_u64s(&v)))?;
             let should_delete = match &result.status {
-                Status::Interesting(_) => 
-                    u64s_to_bytes(&result.record) != v
-                ,
-                _ => true
+                Status::Interesting(_) => u64s_to_bytes(&result.record) != v,
+                _ => true,
             };
             if should_delete {
                 println!("Deleting!");
                 self.database.delete(&self.name, v.as_slice());
             }
-
         }
         Ok(())
     }
@@ -90,6 +114,9 @@ impl MainGenerationLoop {
             self.generate_examples()?;
         }
 
+        if !self.phases.contains(&Phase::Shrink) {
+            return Err(LoopExitReason::Complete);
+        }
         // At the start of this loop we usually only have one example in
         // self.minimized_examples, but as we shrink we may find other ones.
         // Additionally, we may have multiple different failing examples from
@@ -103,26 +130,24 @@ impl MainGenerationLoop {
         //    unfinished again if when shrinking another label, as when trying
         //    to shrink one label we might accidentally find an improved shrink
         //    for another.
-        // 
+        //
         // In principle this might cause us to loop for a very long time before
         // eventually settling on a fixed point, but when that happens we
         // should hit limits on shrinking (which we haven't implemented yet).
         while self.minimized_examples.len() > self.fully_minimized.len() {
-          let keys: Vec<u64> = self.minimized_examples.keys().map(|i| *i).collect();
-          for label in keys.iter() {
-            if self.fully_minimized.insert(*label) {
-              let target = self.minimized_examples[label].clone();
-              let mut shrinker = Shrinker::new(
-                self, target, |r| {
-                  r.status == Status::Interesting(*label)
-              });
+            let keys: Vec<u64> = self.minimized_examples.keys().copied().collect();
+            for label in &keys {
+                if self.fully_minimized.insert(*label) {
+                    let target = self.minimized_examples[label].clone();
+                    let mut shrinker =
+                        Shrinker::new(self, target, |r| r.status == Status::Interesting(*label));
 
-              shrinker.run()?;
+                    shrinker.run()?;
+                }
             }
-          }
         }
 
-        return Err(LoopExitReason::Complete);
+        Err(LoopExitReason::Complete)
     }
 
     fn generate_examples(&mut self) -> Result<TestResult, LoopExitReason> {
@@ -131,12 +156,11 @@ impl MainGenerationLoop {
         {
             let r = self.random.gen();
             let result = self.execute(DataSource::from_random(r))?;
-            match result.status {
-              Status::Interesting(_) => return Ok(result),
-              _ => (),
+            if let Status::Interesting(_) = result.status {
+                return Ok(result);
             }
         }
-        return Err(LoopExitReason::MaxExamples);
+        Err(LoopExitReason::MaxExamples)
     }
 
     fn execute(&mut self, source: DataSource) -> Result<TestResult, LoopExitReason> {
@@ -154,20 +178,22 @@ impl MainGenerationLoop {
             Status::Interesting(n) => {
                 self.best_example = Some(result.clone());
                 let mut changed = false;
-                let mut minimized_examples = &mut self.minimized_examples;
-                let mut database = &mut self.database;
+                let minimized_examples = &mut self.minimized_examples;
+                let database = &mut self.database;
                 let name = &self.name;
 
-                minimized_examples.entry(n).or_insert_with(|| {result.clone()}); 
+                minimized_examples
+                    .entry(n)
+                    .or_insert_with(|| result.clone());
                 minimized_examples.entry(n).and_modify(|e| {
-                  if result < *e {
-                    changed = true;
-                    database.delete(name, &u64s_to_bytes(&(*e.record)));
-                    *e = result.clone()
-                  }; 
+                    if result < *e {
+                        changed = true;
+                        database.delete(name, &u64s_to_bytes(&(*e.record)));
+                        *e = result.clone()
+                    };
                 });
                 if changed {
-                  self.fully_minimized.remove(&n);
+                    self.fully_minimized.remove(&n);
                 }
                 self.interesting_examples += 1;
                 database.save(&self.name, &u64s_to_bytes(result.record.as_slice()));
@@ -197,9 +223,9 @@ where
     ) -> Shrinker<'owner, Predicate> {
         assert!(predicate(&shrink_target));
         Shrinker {
-            main_loop: main_loop,
+            main_loop,
             _predicate: predicate,
-            shrink_target: shrink_target,
+            shrink_target,
             changes: 0,
             expensive_passes_enabled: false,
         }
@@ -209,14 +235,14 @@ where
         let succeeded = (self._predicate)(result);
         if succeeded
             && (
-          // In the presence of writes it may be the case that we thought
-          // we were going to shrink this but didn't actually succeed because
-          // the written value was used.
-          result.record.len() < self.shrink_target.record.len() || (
-            result.record.len() == self.shrink_target.record.len()  &&
-            result.record < self.shrink_target.record
-          )
-        ) {
+                // In the presence of writes it may be the case that we thought
+                // we were going to shrink this but didn't actually succeed because
+                // the written value was used.
+                result.record.len() < self.shrink_target.record.len()
+                    || (result.record.len() == self.shrink_target.record.len()
+                        && result.record < self.shrink_target.record)
+            )
+        {
             self.changes += 1;
             self.shrink_target = result.clone();
         }
@@ -311,14 +337,14 @@ where
             let m = target.draws[j].start;
             let n = target.draws[j].end;
             assert!(m < n);
-            if m < n && (stack.len() == 0 || stack[stack.len() - 1].1 <= m) {
+            if m < n && (stack.is_empty() || stack[stack.len() - 1].1 <= m) {
                 stack.push((m, n))
             }
             j += 1;
         }
 
         let mut attempt = target.record.clone();
-        while stack.len() > 0 {
+        while !stack.is_empty() {
             let (m, n) = stack.pop().unwrap();
             attempt.drain(m..n);
         }
@@ -386,7 +412,7 @@ where
             // next example to be undeletable.
             i += 1;
         }
-        return Ok(());
+        Ok(())
     }
 
     fn delete_all_ranges(&mut self) -> StepResult {
@@ -450,17 +476,15 @@ where
     fn calc_duplicates(&self) -> Vec<Vec<usize>> {
         assert!(self.shrink_target.record.len() == self.shrink_target.sizes.len());
         let mut duplicates: HashMap<(u64, u64), Vec<usize>> = HashMap::new();
-        for (i, (u, v)) in self.shrink_target
+        for (i, (u, v)) in self
+            .shrink_target
             .record
             .iter()
             .zip(self.shrink_target.sizes.iter())
             .enumerate()
         {
             if !self.shrink_target.written_indices.contains(&i) {
-                duplicates
-                    .entry((*u, *v))
-                    .or_insert_with(|| Vec::new())
-                    .push(i);
+                duplicates.entry((*u, *v)).or_insert_with(Vec::new).push(i);
             }
         }
 
@@ -487,12 +511,12 @@ where
             let max_target = *target.iter().max().unwrap();
 
             i += 1;
-            assert!(target.len() > 0);
+            assert!(!target.is_empty());
             let v = self.shrink_target.record[target[0]];
 
             let w = minimize_integer(v, |t| {
                 if max_target >= self.shrink_target.record.len() {
-                  return Ok(false);
+                    return Ok(false);
                 }
                 let mut attempt = self.shrink_target.record.clone();
                 for i in &target {
@@ -507,13 +531,13 @@ where
         Ok(())
     }
 
-    fn execute(&mut self, buf: &DataStream) -> Result<(bool, TestResult), LoopExitReason> {
+    fn execute(&mut self, buf: &DataStreamSlice) -> Result<(bool, TestResult), LoopExitReason> {
         // TODO: Later there will be caching here
-        let result = self.main_loop.execute(DataSource::from_vec(buf.clone()))?;
+        let result = self.main_loop.execute(DataSource::from_vec(buf.to_vec()))?;
         Ok((self.predicate(&result), result))
     }
 
-    fn incorporate(&mut self, buf: &DataStream) -> Result<bool, LoopExitReason> {
+    fn incorporate(&mut self, buf: &DataStreamSlice) -> Result<bool, LoopExitReason> {
         assert!(
             buf.len() <= self.shrink_target.record.len(),
             "Expected incorporate to not increase length, but buf.len() = {} \
@@ -553,13 +577,7 @@ pub struct Engine {
     sender: SyncSender<TestResult>,
 }
 
-impl Clone for Engine {
-    fn clone(&self) -> Engine {
-        panic!("BUG: The Engine was unexpectedly cloned");
-    }
-}
-
-fn bytes_to_u64s(bytes: &[u8]) -> Vec<u64>{
+fn bytes_to_u64s(bytes: &[u8]) -> Vec<u64> {
     let mut reader = io::Cursor::new(bytes);
     let mut result = Vec::new();
     while let Ok(n) = reader.read_u64::<BigEndian>() {
@@ -568,7 +586,7 @@ fn bytes_to_u64s(bytes: &[u8]) -> Vec<u64>{
     result
 }
 
-fn u64s_to_bytes(ints: &[u64]) -> Vec<u8>{
+fn u64s_to_bytes(ints: &[u64]) -> Vec<u8> {
     let mut result = Vec::new();
     for n in ints {
         result.write_u64::<BigEndian>(*n).unwrap();
@@ -577,14 +595,21 @@ fn u64s_to_bytes(ints: &[u64]) -> Vec<u8>{
 }
 
 impl Engine {
-    pub fn new(name: String, max_examples: u64, seed: &[u32], db: BoxedDatabase) -> Engine {
+    pub fn new(
+        name: String,
+        max_examples: u64,
+        phases: Vec<Phase>,
+        seed: &[u32],
+        db: BoxedDatabase,
+    ) -> Engine {
         let (send_local, recv_remote) = sync_channel(1);
         let (send_remote, recv_local) = sync_channel(1);
 
         let main_loop = MainGenerationLoop {
             database: db,
-            name: name,
-            max_examples: max_examples,
+            name,
+            max_examples,
+            phases,
             random: ChaChaRng::from_seed(seed),
             sender: send_remote,
             receiver: recv_remote,
@@ -612,8 +637,8 @@ impl Engine {
         }
     }
 
-    pub fn mark_finished(&mut self, source: DataSource, status: Status) -> () {
-        self.consume_test_result(source.to_result(status))
+    pub fn mark_finished(&mut self, source: DataSource, status: Status) {
+        self.consume_test_result(source.into_result(status))
     }
 
     pub fn next_source(&mut self) -> Option<DataSource> {
@@ -626,35 +651,35 @@ impl Engine {
         mem::swap(&mut local_result, &mut self.loop_response);
 
         match local_result {
-            Some(LoopCommand::RunThis(source)) => return Some(source),
+            Some(LoopCommand::RunThis(source)) => Some(source),
             None => panic!("BUG: Loop response should not be empty at this point"),
             _ => {
                 self.loop_response = local_result;
-                return None;
+                None
             }
         }
     }
 
     pub fn list_minimized_examples(&self) -> Vec<TestResult> {
-        match &self.loop_response {
-            &Some(LoopCommand::Finished(
+        match self.loop_response {
+            Some(LoopCommand::Finished(
                 _,
                 MainGenerationLoop {
                     ref minimized_examples,
                     ..
                 },
             )) => {
-              let mut results: Vec<TestResult> = minimized_examples.values().map(|v| v.clone()).collect();
-              results.sort();
-              results
-            },
+                let mut results: Vec<TestResult> = minimized_examples.values().cloned().collect();
+                results.sort();
+                results
+            }
             _ => Vec::new(),
         }
     }
 
     pub fn best_source(&self) -> Option<DataSource> {
-        match &self.loop_response {
-            &Some(LoopCommand::Finished(
+        match self.loop_response {
+            Some(LoopCommand::Finished(
                 _,
                 MainGenerationLoop {
                     best_example: Some(ref result),
@@ -665,13 +690,12 @@ impl Engine {
         }
     }
 
-
-    fn consume_test_result(&mut self, result: TestResult) -> () {
+    fn consume_test_result(&mut self, result: TestResult) {
         assert!(self.state == EngineState::AwaitingCompletion);
         self.state = EngineState::ReadyToProvide;
 
         if self.has_shutdown() {
-            return ();
+            return;
         }
 
         // NB: Deliberately not matching on result. If this fails,
@@ -681,8 +705,8 @@ impl Engine {
     }
 
     pub fn was_unsatisfiable(&self) -> bool {
-        match &self.loop_response {
-            &Some(LoopCommand::Finished(_, ref main_loop)) => {
+        match self.loop_response {
+            Some(LoopCommand::Finished(_, ref main_loop)) => {
                 main_loop.interesting_examples == 0 && main_loop.valid_examples == 0
             }
             _ => false,
@@ -690,10 +714,7 @@ impl Engine {
     }
 
     fn has_shutdown(&mut self) -> bool {
-        match &self.loop_response {
-            &Some(LoopCommand::Finished(..)) => true,
-            _ => false,
-        }
+        matches!(self.loop_response, Some(LoopCommand::Finished(..)))
     }
 
     fn await_thread_termination(&mut self) {
@@ -718,7 +739,7 @@ impl Engine {
         }
     }
 
-    fn await_loop_response(&mut self) -> () {
+    fn await_loop_response(&mut self) {
         if self.loop_response.is_none() {
             match self.receiver.recv() {
                 Ok(response) => {
@@ -736,43 +757,47 @@ impl Engine {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-  use super::*;
-  use data::FailedDraw;
-  use database::NoDatabase;
+    use super::*;
+    use crate::data::FailedDraw;
+    use crate::database::NoDatabase;
 
-  fn run_to_results<F>(mut f: F) -> Vec<TestResult>
-    where F: FnMut(&mut DataSource) -> Result<Status, FailedDraw> {
-    let seed: [u32; 2] = [0, 0];
-    let mut engine = Engine::new(
-        "run_to_results".to_string(), 1000, &seed,
-        Box::new(NoDatabase),
-    );
-    while let Some(mut source) = engine.next_source() {
-      if let Ok(status) = f(&mut source) {
-        engine.mark_finished(source, status);
-      } else {
-        engine.mark_finished(source, Status::Overflow);
-      }
+    fn run_to_results<F>(mut f: F) -> Vec<TestResult>
+    where
+        F: FnMut(&mut DataSource) -> Result<Status, FailedDraw>,
+    {
+        let seed: [u32; 2] = [0, 0];
+        let mut engine = Engine::new(
+            "run_to_results".to_string(),
+            1000,
+            Phase::all(),
+            &seed,
+            Box::new(NoDatabase),
+        );
+        while let Some(mut source) = engine.next_source() {
+            if let Ok(status) = f(&mut source) {
+                engine.mark_finished(source, status);
+            } else {
+                engine.mark_finished(source, Status::Overflow);
+            }
+        }
+        engine.list_minimized_examples()
     }
-    engine.list_minimized_examples()
-  }
 
-  #[test]
-  fn minimizes_all_examples(){
-    let results = run_to_results(|source| {
-      let n = source.bits(64)?;
-      if n >= 100 {
-        Ok(Status::Interesting(n % 2))
-      } else {
-        Ok(Status::Valid)
-      }
-    });
+    #[test]
+    fn minimizes_all_examples() {
+        let results = run_to_results(|source| {
+            let n = source.bits(64)?;
+            if n >= 100 {
+                Ok(Status::Interesting(n % 2))
+            } else {
+                Ok(Status::Valid)
+            }
+        });
 
-    assert!(results.len() == 2);
-    assert_eq!(results[0].record[0], 100);
-    assert_eq!(results[1].record[0], 101);
-  }
+        assert!(results.len() == 2);
+        assert_eq!(results[0].record[0], 100);
+        assert_eq!(results[1].record[0], 101);
+    }
 }

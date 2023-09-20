@@ -1,2 +1,4 @@
 version=4
-https://github.com/HypothesisWorks/hypothesis/releases .*/archive/hypothesis-python-@ANY_VERSION@@ARCHIVE_EXT@
+opts=searchmode=plain,filenamemangle=s%(?:.*?/)?(?:[a-z-]+)@ANY_VERSION@%@PACKAGE@-$1.tar.gz% \
+ https://api.github.com/repos/HypothesisWorks/hypothesis-python/releases \
+ tarball/(?:[^"]*?/)?(?:[a-z-]*)@ANY_VERSION@

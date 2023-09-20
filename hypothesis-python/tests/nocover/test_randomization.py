@@ -1,31 +1,25 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
-
-import random
 
 from pytest import raises
 
-from hypothesis import Verbosity, find, given, settings, strategies as st
+from hypothesis import Verbosity, core, find, given, settings, strategies as st
+
 from tests.common.utils import no_shrink
 
 
-def test_seeds_off_random():
+def test_seeds_off_internal_random():
     s = settings(phases=no_shrink, database=None)
-    r = random.getstate()
+    r = core._hypothesis_global_random.getstate()
     x = find(st.integers(), lambda x: True, settings=s)
-    random.setstate(r)
+    core._hypothesis_global_random.setstate(r)
     y = find(st.integers(), lambda x: True, settings=s)
     assert x == y
 

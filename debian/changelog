@@ -1,3 +1,96 @@
+python-hypothesis (6.67.1-1) unstable; urgency=medium
+
+  * Team upload.
+  * New upstream version 6.67.1
+    - Fix a rare RecursionError introduced by the changes in 6.65.0
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 06 Feb 2023 13:09:15 +0100
+
+python-hypothesis (6.65.2-1) unstable; urgency=medium
+
+  * Team upload.
+  * New upstream version 6.65.2
+  * Fix failing numpy test (Closes: #1030233)
+
+ -- Timo Röhling <roehling@debian.org>  Wed, 01 Feb 2023 21:17:16 +0100
+
+python-hypothesis (6.64.0-1) unstable; urgency=medium
+
+  * Team upload.
+  * New upstream version 6.64.0
+    - Fix compatibility with numpy 1.24 (Closes: #1028830)
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 23 Jan 2023 23:55:53 +0100
+
+python-hypothesis (6.61.0-1) unstable; urgency=medium
+
+  * Team upload.
+  * New upstream version 6.61.0
+  * Bump Standards-Version to 4.6.2
+  * Drop Built-Using for Sphinx documentation
+
+ -- Timo Röhling <roehling@debian.org>  Mon, 26 Dec 2022 13:29:50 +0100
+
+python-hypothesis (6.60.0-3) unstable; urgency=medium
+
+  * Team upload.
+  * Upload to unstable.
+  * Consolidate skipping all broken tests in one patch
+  * Apply M-A hint
+
+ -- Timo Röhling <roehling@debian.org>  Sat, 10 Dec 2022 17:36:35 +0100
+
+python-hypothesis (6.60.0-2) experimental; urgency=medium
+
+  * Team upload.
+  * Remove obsolete d/tests and fix autopkgtest invocation
+  * Update Build-Depends
+  * Avoid circular dependency on self
+  * Set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+
+ -- Timo Röhling <roehling@debian.org>  Fri, 09 Dec 2022 23:34:25 +0100
+
+python-hypothesis (6.60.0-1) experimental; urgency=medium
+
+  * Team upload.
+  * Fix d/watch
+  * New upstream version 6.60.0
+    - Fix Python 3.11 compatibility (Closes: #1025105)
+  * New Build-Depend on python3-exceptiongroup
+  * Remove unneeded dh_auto_test override
+  * Use autopkgtest-pkg-pybuild
+
+ -- Timo Röhling <roehling@debian.org>  Thu, 08 Dec 2022 15:00:20 +0100
+
+python-hypothesis (6.36.0-1) unstable; urgency=medium
+
+  * New upstream release
+  * debian/control
+    - add a Breaks against python3-h2, to easy their testing migraiton
+
+ -- Sandro Tosi <morph@debian.org>  Mon, 31 Jan 2022 00:56:15 -0500
+
+python-hypothesis (6.35.1-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Sandro Tosi <morph@debian.org>  Mon, 17 Jan 2022 22:29:55 -0500
+
+python-hypothesis (6.35.0-1) unstable; urgency=medium
+
+  * New upstream release; Closes: #1001538, #1002392, #1000639
+  * debian/watch
+    - properly detect new upstream releases
+  * debian/copyright
+    - update upstream copyright information
+  * debian/tests/control
+    - skip test_basic_indices_default_max_dims_does_not_warn in autopkgtest
+  * debian/rules
+    - set the proper PYTHONPATH when building doc
+  * refresh/update patches
+
+ -- Sandro Tosi <morph@debian.org>  Sun, 16 Jan 2022 23:31:30 -0500
+
 python-hypothesis (5.43.3-1pexip1) pexip; urgency=medium
 
   * Update to new upstream version and rebuild for buster.

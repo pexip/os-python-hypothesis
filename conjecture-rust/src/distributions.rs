@@ -1,4 +1,4 @@
-use data::{DataSource, FailedDraw};
+use crate::data::{DataSource, FailedDraw};
 
 use std::cmp::{Ord, Ordering, PartialOrd, Reverse};
 use std::collections::BinaryHeap;
@@ -48,8 +48,8 @@ pub struct Repeat {
 impl Repeat {
     pub fn new(min_count: u64, max_count: u64, expected_count: f64) -> Repeat {
         Repeat {
-            min_count: min_count,
-            max_count: max_count,
+            min_count,
+            max_count,
             p_continue: 1.0 - 1.0 / (1.0 + expected_count),
             current_count: 0,
         }
@@ -82,7 +82,7 @@ impl Repeat {
             self.current_count += 1;
         } else {
         }
-        return Ok(result);
+        Ok(result)
     }
 }
 
@@ -105,21 +105,21 @@ impl SamplerEntry {
 
 impl Ord for SamplerEntry {
     fn cmp(&self, other: &SamplerEntry) -> Ordering {
-        return self.primary
+        self.primary
             .cmp(&other.primary)
-            .then(self.alternate.cmp(&other.alternate));
+            .then(self.alternate.cmp(&other.alternate))
     }
 }
 
 impl PartialOrd for SamplerEntry {
     fn partial_cmp(&self, other: &SamplerEntry) -> Option<Ordering> {
-        return Some(self.cmp(other));
+        Some(self.cmp(other))
     }
 }
 
 impl PartialEq for SamplerEntry {
     fn eq(&self, other: &SamplerEntry) -> bool {
-        return self.cmp(other) == Ordering::Equal;
+        self.cmp(other) == Ordering::Equal
     }
 }
 
@@ -131,11 +131,11 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    pub fn new(weights: Vec<f32>) -> Sampler {
+    pub fn new(weights: &[f32]) -> Sampler {
         // FIXME: The correct thing to do here is to allow this,
         // return early, and make this reject the data, but we don't
         // currently have the status built into our data properly...
-        assert!(weights.len() > 0);
+        assert!(!weights.is_empty());
 
         let mut table = Vec::new();
 
@@ -151,7 +151,7 @@ impl Sampler {
         for (i, w) in weights.iter().enumerate() {
             let scaled = n * w / total;
             scaled_probabilities.push(scaled);
-            if scaled == 1.0 {
+            if (scaled - 1.0).abs() < f32::EPSILON {
                 table.push(SamplerEntry::single(i))
             } else if scaled > 1.0 {
                 large.push(Reverse(i));
@@ -198,12 +198,12 @@ impl Sampler {
         }
 
         table.sort();
-        assert!(table.len() > 0);
-        return Sampler { table: table };
+        assert!(!table.is_empty());
+        Sampler { table }
     }
 
     pub fn sample(&self, source: &mut DataSource) -> Draw<usize> {
-        assert!(self.table.len() > 0);
+        assert!(!self.table.is_empty());
         let i = bounded_int(source, self.table.len() as u64 - 1)? as usize;
         let entry = &self.table[i];
         let use_alternate = weighted(source, entry.use_alternate as f64)?;
@@ -216,73 +216,18 @@ impl Sampler {
 }
 
 pub fn good_bitlengths() -> Sampler {
-    let weights = vec![
-        4.0,
-        4.0,
-        4.0,
-        4.0,
-        4.0,
-        4.0,
-        4.0,
-        4.0, // 1 byte
-        2.0,
-        2.0,
-        2.0,
-        2.0,
-        2.0,
-        2.0,
-        2.0,
-        2.0, // 2 bytes
-        1.0,
-        1.0,
-        1.0,
-        1.0,
-        1.0,
-        1.0,
-        1.0,
-        1.0, // 3 bytes
-        0.5,
-        0.5,
-        0.5,
-        0.5,
-        0.5,
-        0.5,
-        0.5,
-        0.5, // 4 bytes
-        0.1,
-        0.1,
-        0.1,
-        0.1,
-        0.1,
-        0.1,
-        0.1,
-        0.1, // 5 bytes
-        0.1,
-        0.1,
-        0.1,
-        0.1,
-        0.1,
-        0.1,
-        0.1,
-        0.1, // 6 bytes
-        0.1,
-        0.1,
-        0.1,
-        0.1,
-        0.1,
-        0.1,
-        0.1,
-        0.1, // 7 bytes
-        0.1,
-        0.1,
-        0.1,
-        0.1,
-        0.1,
-        0.1,
-        0.1, // 8 bytes (last bit spare for sign)
+    let weights = [
+        4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, // 1 byte
+        2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, // 2 bytes
+        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, // 3 bytes
+        0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, // 4 bytes
+        0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, // 5 bytes
+        0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, // 6 bytes
+        0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, // 7 bytes
+        0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, // 8 bytes (last bit spare for sign)
     ];
     assert!(weights.len() == 63);
-    Sampler::new(weights)
+    Sampler::new(&weights)
 }
 
 pub fn integer_from_bitlengths(source: &mut DataSource, bitlengths: &Sampler) -> Draw<i64> {

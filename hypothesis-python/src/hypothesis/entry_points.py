@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 """Run all functions registered for the "hypothesis" entry point.
 
@@ -29,8 +24,14 @@ try:
         import importlib_metadata  # type: ignore  # mypy thinks this is a redefinition
 
     def get_entry_points():
-        yield from importlib_metadata.entry_points().get("hypothesis", [])
-
+        try:
+            eps = importlib_metadata.entry_points(group="hypothesis")
+        except TypeError:  # pragma: no cover
+            # Load-time selection requires Python >= 3.10 or importlib_metadata >= 3.6,
+            # so we'll retain this fallback logic for some time to come.  See also
+            # https://importlib-metadata.readthedocs.io/en/latest/using.html
+            eps = importlib_metadata.entry_points().get("hypothesis", [])
+        yield from eps
 
 except ImportError:
     # But if we're not on Python >= 3.8 and the importlib_metadata backport

@@ -2,10 +2,18 @@
 
 export LC_ALL=C.UTF-8
 export PYBUILD_NAME=hypothesis
-export PYBUILD_TEST_ARGS=--assert=plain -k 'not dateutil' tests/cover tests/nocover tests/datetime tests/numpy
+export PYBUILD_DIR=hypothesis-python
+export PYBUILD_TEST_ARGS=-k 'not dateutil' tests/cover tests/nocover tests/datetime tests/numpy
+# If pytest autoloads the hypothesis plugin, it interferes with the tests 
+export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
 
 %:
-	dh $@ --sourcedirectory=hypothesis-python --buildsystem=pybuild
+	dh $@ --buildsystem=pybuild
 
-override_dh_auto_test:
-	echo "No tests performed until we upgrade to bullseye"
+execute_after_dh_auto_build:
+ifeq ($(filter nodoc,$(DEB_BUILD_PROFILES)),)
+	PYTHONPATH=hypothesis-python/src \
+	    http_proxy='127.0.0.1:9' \
+	    https_proxy='127.0.0.1:9' \
+	    python3 -m sphinx -N -b html hypothesis-python/docs/ $(CURDIR)/.pybuild/docs/html/
+endif

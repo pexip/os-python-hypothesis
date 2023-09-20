@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import sys
 
@@ -25,7 +20,7 @@ from hypothesis.internal.conjecture.engine import ConjectureRunner
 from hypothesis.internal.floats import float_to_int
 
 EXPONENTS = list(range(0, flt.MAX_EXPONENT + 1))
-assert len(EXPONENTS) == 2 ** 11
+assert len(EXPONENTS) == 2**11
 
 
 def assert_reordered_exponents(res):
@@ -57,12 +52,12 @@ def test_encode_decode():
 @given(st.data())
 def test_double_reverse_bounded(data):
     n = data.draw(st.integers(1, 64))
-    i = data.draw(st.integers(0, 2 ** n - 1))
+    i = data.draw(st.integers(0, 2**n - 1))
     j = flt.reverse_bits(i, n)
     assert flt.reverse_bits(j, n) == i
 
 
-@given(st.integers(0, 2 ** 64 - 1))
+@given(st.integers(0, 2**64 - 1))
 def test_double_reverse(i):
     j = flt.reverse64(i)
     assert flt.reverse64(j) == i
@@ -103,7 +98,7 @@ def test_floats_round_trip(f):
 
 
 @example(1, 0.5)
-@given(st.integers(1, 2 ** 53), st.floats(0, 1).filter(lambda x: x not in (0, 1)))
+@given(st.integers(1, 2**53), st.floats(0, 1).filter(lambda x: x not in (0, 1)))
 def test_floats_order_worse_than_their_integral_part(n, g):
     f = n + g
     assume(int(f) != f)
@@ -162,7 +157,7 @@ def float_runner(start, condition):
             data.mark_interesting()
 
     runner = ConjectureRunner(test_function)
-    runner.cached_test_function(int_to_bytes(flt.float_to_lex(start), 8) + bytes(1))
+    runner.cached_test_function(bytes(1) + int_to_bytes(flt.float_to_lex(start), 8))
     assert runner.interesting_examples
     return runner
 

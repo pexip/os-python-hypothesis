@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from collections import Counter
 from fractions import Fraction
@@ -112,7 +107,7 @@ def test_drawing_an_exact_fraction_coin():
 
 
 def test_too_small_to_be_useful_coin():
-    assert not cu.biased_coin(ConjectureData.for_buffer([1]), 0.5 ** 65)
+    assert not cu.biased_coin(ConjectureData.for_buffer([1]), 0.5**65)
 
 
 @example([Fraction(1, 3), Fraction(1, 3), Fraction(1, 3)])
@@ -124,7 +119,7 @@ def test_too_small_to_be_useful_coin():
 @settings(
     deadline=None,
     suppress_health_check=HealthCheck.all(),
-    phases=[Phase.explicit] if IN_COVERAGE_TESTS else tuple(Phase),
+    phases=[Phase.explicit] if IN_COVERAGE_TESTS else settings.default.phases,
 )
 @given(st.lists(st.fractions(min_value=0, max_value=1), min_size=1))
 def test_sampler_distribution(weights):
@@ -200,7 +195,7 @@ def test_center_in_middle_above():
 def test_restricted_bits():
     assert (
         cu.integer_range(
-            ConjectureData.for_buffer([1, 0, 0, 0, 0]), lower=0, upper=2 ** 64 - 1
+            ConjectureData.for_buffer([1, 0, 0, 0, 0]), lower=0, upper=2**64 - 1
         )
         == 0
     )
@@ -250,6 +245,14 @@ def test_fixed_size_draw_many():
     assert many.more()
     assert many.more()
     assert many.more()
+    assert not many.more()
+
+
+def test_astronomically_unlikely_draw_many():
+    # Our internal helper doesn't underflow to zero or negative, but nor
+    # will we ever generate an element for such a low average size.
+    buffer = ConjectureData.for_buffer(1024 * [255])
+    many = cu.many(buffer, min_size=0, max_size=10, average_size=1e-5)
     assert not many.more()
 
 
@@ -318,5 +321,9 @@ def test_can_draw_arbitrary_fractions(p, b):
 
 
 def test_samples_from_a_range_directly():
-    s = cu.check_sample(range(10 ** 1000), "")
+    s = cu.check_sample(range(10**1000), "")
     assert isinstance(s, range)
+
+
+def test_p_continue_to_average_saturates():
+    assert cu._p_continue_to_avg(1.1, 100) == 100

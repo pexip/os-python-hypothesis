@@ -1,22 +1,19 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import numpy as np
+import pytest
 
 from hypothesis import HealthCheck, given, reject, settings, strategies as st
 from hypothesis.extra import numpy as npst, pandas as pdst
+
 from tests.common.debug import find_any
 from tests.pandas.helpers import supported_by_pandas
 
@@ -140,7 +137,7 @@ def column_strategy(draw):
     )
 
 
-@given(pdst.data_frames(pdst.columns(1, dtype=np.dtype("<M8[ns]"))))
+@given(pdst.data_frames(pdst.columns(1, dtype=np.dtype("M8[ns]"))))
 def test_data_frames_with_timestamp_columns(df):
     pass
 
@@ -242,3 +239,21 @@ def test_will_fill_missing_columns_in_tuple_row(df):
 )
 def test_can_generate_unique_columns(df):
     assert set(df[0]) == set(range(10))
+
+
+@pytest.mark.skip(reason="Just works on Pandas 1.4, though the changelog is silent")
+@pytest.mark.parametrize("dtype", [None, object])
+def test_expected_failure_from_omitted_object_dtype(dtype):
+    # See https://github.com/HypothesisWorks/hypothesis/issues/3133
+    col = pdst.column(elements=st.sets(st.text(), min_size=1), dtype=dtype)
+
+    @given(pdst.data_frames(columns=[col]))
+    def works_with_object_dtype(df):
+        pass
+
+    if dtype is object:
+        works_with_object_dtype()
+    else:
+        assert dtype is None
+        with pytest.raises(ValueError, match="Maybe passing dtype=object would help"):
+            works_with_object_dtype()

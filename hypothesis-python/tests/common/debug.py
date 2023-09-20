@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from hypothesis import (
     HealthCheck,
@@ -23,6 +18,7 @@ from hypothesis import (
 from hypothesis.errors import Found, NoSuchExample, Unsatisfiable
 from hypothesis.internal.conjecture.data import ConjectureData, StopTest
 from hypothesis.internal.reflection import get_pretty_function_description
+
 from tests.common.utils import no_shrink
 
 TIME_INCREMENT = 0.01
@@ -92,7 +88,7 @@ def find_any(definition, condition=lambda _: True, settings=None):
 def assert_no_examples(strategy, condition=lambda _: True):
     try:
         result = find_any(strategy, condition)
-        assert False, "Expected no results but found %r" % (result,)
+        raise AssertionError(f"Expected no results but found {result!r}")
     except (Unsatisfiable, NoSuchExample):
         pass
 
@@ -106,7 +102,7 @@ def assert_all_examples(strategy, predicate):
 
     @given(strategy)
     def assert_examples(s):
-        msg = "Found %r using strategy %s which does not match" % (s, strategy)
+        msg = f"Found {s!r} using strategy {strategy} which does not match"
         assert predicate(s), msg
 
     assert_examples()

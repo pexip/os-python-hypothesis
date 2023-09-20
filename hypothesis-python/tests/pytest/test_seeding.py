@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import re
 
@@ -48,7 +43,7 @@ def test_runs_repeatably_when_seed_is_set(seed, testdir):
 
     results = [
         testdir.runpytest(
-            script, "--verbose", "--strict", "--hypothesis-seed", str(seed)
+            script, "--verbose", "--strict-markers", f"--hypothesis-seed={seed}", "-rN"
         )
         for _ in range(2)
     ]
@@ -82,7 +77,7 @@ def test_failure(i):
     if target is None:
         assume(i not in seen)
     else:
-        target.write("%s\\n" % (i,))
+        target.write(f"{i}\\n")
         reject()
 """
 
@@ -94,7 +89,7 @@ def test_repeats_healthcheck_when_following_seed_instruction(testdir, tmpdir):
 
     script = testdir.makepyfile(health_check_test)
 
-    initial = testdir.runpytest(script, "--verbose", "--strict")
+    initial = testdir.runpytest(script, "--verbose", "--strict-markers")
 
     match = CONTAINS_SEED_INSTRUCTION.search("\n".join(initial.stdout.lines))
     initial_output = "\n".join(initial.stdout.lines)
@@ -102,12 +97,14 @@ def test_repeats_healthcheck_when_following_seed_instruction(testdir, tmpdir):
     match = CONTAINS_SEED_INSTRUCTION.search(initial_output)
     assert match is not None
 
-    rerun = testdir.runpytest(script, "--verbose", "--strict", match.group(0))
+    rerun = testdir.runpytest(script, "--verbose", "--strict-markers", match.group(0))
     rerun_output = "\n".join(rerun.stdout.lines)
 
     assert "FailedHealthCheck" in rerun_output
     assert "--hypothesis-seed" not in rerun_output
 
-    rerun2 = testdir.runpytest(script, "--verbose", "--strict", "--hypothesis-seed=10")
+    rerun2 = testdir.runpytest(
+        script, "--verbose", "--strict-markers", "--hypothesis-seed=10"
+    )
     rerun2_output = "\n".join(rerun2.stdout.lines)
     assert "FailedHealthCheck" not in rerun2_output

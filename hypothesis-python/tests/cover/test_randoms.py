@@ -1,26 +1,22 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import inspect
 import math
+import sys
 from copy import copy
 
 import pytest
 
 from hypothesis import assume, given, strategies as st
-from hypothesis.errors import MultipleFailures
+from hypothesis.internal.compat import ExceptionGroup
 from hypothesis.strategies._internal.random import (
     RANDOM_METHODS,
     HypothesisRandom,
@@ -28,8 +24,8 @@ from hypothesis.strategies._internal.random import (
     convert_kwargs,
     normalize_zero,
 )
+
 from tests.common.debug import find_any
-from tests.common.utils import capture_out, checks_deprecated_behaviour
 
 
 def test_implements_all_random_methods():
@@ -54,12 +50,13 @@ def define_method_strategy(name, **kwargs):
 
 
 define_method_strategy("betavariate", alpha=beta_param, beta=beta_param)
+define_method_strategy("binomialvariate", n=st.integers(min_value=1), p=st.floats(0, 1))
 define_method_strategy("gammavariate", alpha=beta_param, beta=beta_param)
 define_method_strategy("weibullvariate", alpha=beta_param, beta=beta_param)
 define_method_strategy("choice", seq=seq_param)
 define_method_strategy("choices", population=seq_param, k=st.integers(1, 100))
 define_method_strategy("expovariate", lambd=beta_param)
-define_method_strategy("_randbelow", n=st.integers(1, 2 ** 64))
+define_method_strategy("_randbelow", n=st.integers(1, 2**64))
 define_method_strategy("random")
 define_method_strategy("getrandbits", n=st.integers(1, 128))
 define_method_strategy("gauss", mu=st.floats(-1000, 1000), sigma=beta_param)
@@ -77,7 +74,7 @@ define_method_strategy("shuffle", x=st.lists(st.integers()))
 define_method_strategy("randbytes", n=st.integers(0, 100))
 
 
-INT64 = st.integers(-(2 ** 63), 2 ** 63 - 1)
+INT64 = st.integers(-(2**63), 2**63 - 1)
 
 
 @st.composite
@@ -96,7 +93,7 @@ def any_call_of_method(draw, method):
         b = draw(INT64)
         assume(a != b)
         a, b = sorted((a, b))
-        if a == 0 and draw(st.booleans()):
+        if a == 0 and sys.version_info[:2] < (3, 10) and draw(st.booleans()):
             start = b
             stop = None
         else:
@@ -110,8 +107,6 @@ def any_call_of_method(draw, method):
         a, b = sorted((a, b))
         if draw(st.booleans()):
             draw(st.floats(a, b))
-        else:
-            pass
         kwargs = {"low": a, "high": b, "mode": None}
     elif method == "uniform":
         a = normalize_zero(draw(st.floats(allow_infinity=False, allow_nan=False)))
@@ -219,10 +214,9 @@ def test_state_is_consistent(r1, r2):
     assert r1.getstate() == r2.getstate()
 
 
-@checks_deprecated_behaviour
 @given(st.randoms())
 def test_does_not_use_true_random_by_default(rnd):
-    assert isinstance(rnd, TrueRandom)
+    assert not isinstance(rnd, TrueRandom)
 
 
 @given(st.randoms(use_true_random=False))
@@ -246,12 +240,11 @@ def test_outputs_random_calls(use_true_random):
     @given(st.randoms(use_true_random=use_true_random, note_method_calls=True))
     def test(rnd):
         rnd.uniform(0.1, 0.5)
-        assert False
+        raise AssertionError
 
-    with capture_out() as out:
-        with pytest.raises(AssertionError):
-            test()
-    assert ".uniform(0.1, 0.5)" in out.getvalue()
+    with pytest.raises(AssertionError) as err:
+        test()
+    assert ".uniform(0.1, 0.5)" in "\n".join(err.value.__notes__)
 
 
 @pytest.mark.skipif(
@@ -263,12 +256,11 @@ def test_converts_kwargs_correctly_in_output(use_true_random):
     @given(st.randoms(use_true_random=use_true_random, note_method_calls=True))
     def test(rnd):
         rnd.choices([1, 2, 3, 4], k=2)
-        assert False
+        raise AssertionError
 
-    with capture_out() as out:
-        with pytest.raises(AssertionError):
-            test()
-    assert ".choices([1, 2, 3, 4], k=2)" in out.getvalue()
+    with pytest.raises(AssertionError) as err:
+        test()
+    assert ".choices([1, 2, 3, 4], k=2)" in "\n".join(err.value.__notes__)
 
 
 @given(st.randoms(use_true_random=False))
@@ -304,7 +296,7 @@ def test_triangular_modes():
         assert x < 0.5
         assert x > 0.5
 
-    with pytest.raises(MultipleFailures):
+    with pytest.raises(ExceptionGroup):
         test()
 
 
@@ -338,11 +330,11 @@ def test_randbytes_have_right_length(rnd, n):
 
 @given(any_random)
 def test_can_manage_very_long_ranges_with_step(rnd):
-    i = rnd.randrange(0, 2 ** 256, 3)
+    i = rnd.randrange(0, 2**256, 3)
 
     assert i % 3 == 0
-    assert 0 <= i < 2 ** 256
-    assert i in range(0, 2 ** 256, 3)
+    assert 0 <= i < 2**256
+    assert i in range(0, 2**256, 3)
 
 
 @given(any_random, st.data())

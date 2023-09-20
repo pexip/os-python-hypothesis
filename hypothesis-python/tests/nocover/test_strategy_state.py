@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import hashlib
 import math
@@ -46,7 +41,7 @@ def clamp(lower, value, upper):
     """Given a value and optional lower/upper bounds, 'clamp' the value so that
     it satisfies lower <= value <= upper."""
     if (lower is not None) and (upper is not None) and (lower > upper):
-        raise ValueError("Cannot clamp with lower > upper: %r > %r" % (lower, upper))
+        raise ValueError(f"Cannot clamp with lower > upper: {lower!r} > {upper!r}")
     if lower is not None:
         value = max(lower, value)
     if upper is not None:
@@ -107,13 +102,10 @@ class HypothesisSpec(RuleBasedStateMachine):
         return tuples(*spec)
 
     @rule(target=strategies, source=strategies, level=integers(1, 10), mixer=text())
-    def filtered_strategy(s, source, level, mixer):
+    def filtered_strategy(self, source, level, mixer):
         def is_good(x):
-            return bool(
-                Random(
-                    hashlib.sha384((mixer + repr(x)).encode("utf-8")).digest()
-                ).randint(0, level)
-            )
+            seed = hashlib.sha384((mixer + repr(x)).encode()).digest()
+            return bool(Random(seed).randint(0, level))
 
         return source.filter(is_good)
 
@@ -131,7 +123,7 @@ class HypothesisSpec(RuleBasedStateMachine):
 
     @rule(target=varied_floats, source=varied_floats, offset=integers(-100, 100))
     def adjust_float(self, source, offset):
-        return int_to_float(clamp(0, float_to_int(source) + offset, 2 ** 64 - 1))
+        return int_to_float(clamp(0, float_to_int(source) + offset, 2**64 - 1))
 
     @rule(target=strategies, left=varied_floats, right=varied_floats)
     def float_range(self, left, right):
@@ -155,7 +147,7 @@ class HypothesisSpec(RuleBasedStateMachine):
 
         def do_map(value):
             rep = repr(value)
-            random = Random(hashlib.sha384((mixer + rep).encode("utf-8")).digest())
+            random = Random(hashlib.sha384((mixer + rep).encode()).digest())
             if random.random() <= p:
                 return result1
             else:

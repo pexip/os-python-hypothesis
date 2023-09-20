@@ -21,7 +21,7 @@ External strategies
 Some packages provide strategies directly:
 
 * :pypi:`hypothesis-fspaths` - strategy to generate filesystem paths.
-* :pypi:`hypothesis-geojson` - strategy to generate `GeoJson <http://geojson.org/>`_.
+* :pypi:`hypothesis-geojson` - strategy to generate `GeoJson <https://geojson.org/>`_.
 * :pypi:`hypothesis-geometry` - strategies to generate geometric objects.
 * :pypi:`hs-dbus-signature` - strategy to generate arbitrary
   `D-Bus signatures <https://dbus.freedesktop.org>`_.
@@ -42,6 +42,15 @@ Others provide a function to infer a strategy from some other schema:
 * :pypi:`hypothesis-pb` - infer strategies from `Protocol Buffer
   <https://developers.google.com/protocol-buffers/>`_ schemas.
 
+Or some other custom integration, such as a :ref:`"hypothesis" entry point <entry-points>`:
+
+* :pypi:`deal` is a design-by-contract library with built-in Hypothesis support.
+* :pypi:`icontract-hypothesis` infers strategies from :pypi:`icontract` code contracts.
+* :pypi:`Pandera` schemas all have a ``.strategy()`` method, which returns a strategy for
+  matching :class:`~pandas:pandas.DataFrame`\ s.
+* :pypi:`Pydantic` automatically registers constrained types - so
+  :func:`~hypothesis.strategies.builds` and :func:`~hypothesis.strategies.from_type`
+  "just work" regardless of the underlying implementation.
 
 -----------------
 Other cool things
@@ -63,7 +72,7 @@ concurrent programs.
 :pypi:`pymtl3` is "an open-source Python-based hardware generation, simulation,
 and verification framework with multi-level hardware modeling support", which
 ships with Hypothesis integrations to check that all of those levels are
-eqivalent, from function-level to register-transfer level and even to hardware.
+equivalent, from function-level to register-transfer level and even to hardware.
 
 :pypi:`libarchimedes` makes it easy to use Hypothesis in
 `the Hy language <https://github.com/hylang/hy>`_, a Lisp embedded in Python.
@@ -77,6 +86,13 @@ fail - by trying all kinds of inputs and reporting whatever happens.
 implement functor, applicative, monad, and other laws; allowing a declarative
 approach to be combined with traditional pythonic code.
 
+:pypi:`icontract-hypothesis` includes a :doc:`ghostwriter <ghostwriter>` for test files
+and IDE integrations such as `icontract-hypothesis-vim <https://github.com/mristin/icontract-hypothesis-vim>`_,
+`icontract-hypothesis-pycharm <https://github.com/mristin/icontract-hypothesis-pycharm>`_,
+and
+`icontract-hypothesis-vscode <https://github.com/mristin/icontract-hypothesis-vscode>`_ -
+you can run a quick 'smoke test' with only a few keystrokes for any type-annotated
+function, even if it doesn't have any contracts!
 
 --------------------
 Writing an extension
@@ -101,19 +117,25 @@ features (if you need them) and better long-term guarantees about maintenance.
 We particularly encourage pull requests for new composable primitives that
 make implementing other strategies easier, or for widely used types in the
 standard library. Strategies for other things are also welcome; anything with
-external dependencies just goes in hypothesis.extra.
+external dependencies just goes in ``hypothesis.extra``.
+
+Tools such as assertion helpers may also need to check whether the current
+test is using Hypothesis:
+
+.. autofunction:: hypothesis.currently_in_test_context
 
 
 .. _entry-points:
 
 --------------------------------------------------
-Registering strategies via setuptools entry points
+Hypothesis integration via setuptools entry points
 --------------------------------------------------
 
 If you would like to ship Hypothesis strategies for a custom type - either as
 part of the upstream library, or as a third-party extension, there's a catch:
 :func:`~hypothesis.strategies.from_type` only works after the corresponding
-call to :func:`~hypothesis.strategies.register_type_strategy`.  This means that
+call to :func:`~hypothesis.strategies.register_type_strategy`, and you'll have
+the same problem with :func:`~hypothesis.register_random`.  This means that
 either
 
 - you have to try importing Hypothesis to register the strategy when *your*
@@ -161,7 +183,7 @@ and then tell ``setuptools`` that this is your ``"hypothesis"`` entry point:
 And that's all it takes!
 
 .. note::
-    On Python 3.6 and 3.7, where the ``importlib.metadata`` module
+    On Python 3.7, where the ``importlib.metadata`` module
     is not in the standard library, loading entry points requires either the
     :pypi:`importlib_metadata` (preferred) or :pypi:`setuptools` (fallback)
     package to be installed.

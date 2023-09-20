@@ -1,24 +1,19 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import os
 import subprocess
 
 import hypothesistooling as tools
 from hypothesistooling import installers as install, releasemanagement as rm
-from hypothesistooling.junkdrawer import in_dir, unlink_if_present, unquote_string
+from hypothesistooling.junkdrawer import in_dir, unquote_string
 
 PACKAGE_NAME = "conjecture-rust"
 
@@ -33,7 +28,7 @@ CHANGELOG_FILE = os.path.join(BASE_DIR, "CHANGELOG.md")
 
 CARGO_FILE = os.path.join(BASE_DIR, "Cargo.toml")
 
-SRC = os.path.join(BASE_DIR, "lib")
+SRC = os.path.join(BASE_DIR, "src")
 
 
 def has_release():
@@ -57,7 +52,6 @@ def update_changelog_and_version():
         version=version,
         entry=release_contents,
     )
-    os.unlink(RELEASE_FILE)
 
 
 def cargo(*args):
@@ -98,16 +92,6 @@ CARGO_CREDENTIALS = os.path.expanduser("~/.cargo/credentials")
 def upload_distribution():
     """Upload the built package to crates.io."""
     tools.assert_can_release()
-
-    # Yes, cargo really will only look in this file. Yes this is terrible.
-    # This only runs on Travis, so we may be assumed to own it, but still.
-    unlink_if_present(CARGO_CREDENTIALS)
-
-    # symlink so that the actual secret credentials can't be leaked via the
-    # cache.
-    os.symlink(tools.CARGO_API_KEY, CARGO_CREDENTIALS)
-
-    # Give the key the right permissions.
-    os.chmod(CARGO_CREDENTIALS, int("0600", 8))
-
+    # Credentials are supplied by the CARGO_REGISTRY_TOKEN envvar, which in turn
+    # is set from the repository secrets by GitHub Actions.
     cargo("publish")

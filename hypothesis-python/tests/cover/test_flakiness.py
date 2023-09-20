@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import pytest
 
@@ -19,6 +14,7 @@ from hypothesis import HealthCheck, Verbosity, assume, example, given, reject, s
 from hypothesis.errors import Flaky, Unsatisfiable, UnsatisfiedAssumption
 from hypothesis.internal.conjecture.engine import MIN_TEST_CALLS
 from hypothesis.strategies import booleans, composite, integers, lists, random_module
+
 from tests.common.utils import no_shrink
 
 
@@ -47,7 +43,7 @@ def test_gives_flaky_error_if_assumption_is_flaky():
     def oops(s):
         assume(s not in seen)
         seen.add(s)
-        assert False
+        raise AssertionError
 
     with pytest.raises(Flaky):
         oops()
@@ -125,4 +121,4 @@ def test_failure_sequence_inducing(building, testing, rnd):
     except (Nope, Unsatisfiable, Flaky):
         pass
     except UnsatisfiedAssumption:
-        raise SatisfyMe()
+        raise SatisfyMe() from None

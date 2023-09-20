@@ -1,19 +1,16 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 from collections import OrderedDict
+
+import pytest
 
 from hypothesis import given, strategies as st
 from hypothesis.control import reject
@@ -105,3 +102,15 @@ def test_repr_evals_to_thing_with_same_repr(strategy):
     via_eval = eval(r, strategy_globals)
     r2 = repr(via_eval)
     assert r == r2
+
+
+@pytest.mark.parametrize(
+    "r",
+    [
+        "none().filter(foo).map(bar)",
+        "just(1).filter(foo).map(bar)",
+        "sampled_from([1, 2, 3]).filter(foo).map(bar)",
+    ],
+)
+def test_sampled_transform_reprs(r):
+    assert repr(eval(r, strategy_globals)) == r

@@ -1,17 +1,11 @@
 # frozen_string_literal: true
 
-require 'helix_runtime'
-
-require_relative '../hypothesis-ruby/native'
-
-require 'rspec/expectations'
+require 'rutie'
 
 module Hypothesis
   DEFAULT_DATABASE_PATH = File.join(Dir.pwd, '.hypothesis', 'examples')
 
   class Engine
-    include RSpec::Matchers
-
     attr_reader :current_source
     attr_accessor :is_find
 
@@ -25,7 +19,11 @@ module Hypothesis
       database = nil if database == false
 
       @core_engine = HypothesisCoreEngine.new(
-        name, database, seed, options.fetch(:max_examples)
+        name,
+        database,
+        seed,
+        options.fetch(:max_examples),
+        options.fetch(:phases)
       )
 
       @exceptions_to_tags = Hash.new { |h, k| h[k] = h.size }

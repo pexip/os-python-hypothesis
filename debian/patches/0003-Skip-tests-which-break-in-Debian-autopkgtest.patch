@@ -1,0 +1,55 @@
+From: Emmanuel Arias <eamanu@yaerobi.com>
+Date: Sat, 10 Dec 2022 17:34:35 +0100
+Subject: Skip tests which break in Debian autopkgtest
+
+---
+ hypothesis-python/tests/cover/test_settings.py    | 1 +
+ hypothesis-python/tests/numpy/test_deprecation.py | 1 +
+ hypothesis-python/tests/numpy/test_import.py      | 3 +++
+ 3 files changed, 5 insertions(+)
+
+diff --git a/hypothesis-python/tests/cover/test_settings.py b/hypothesis-python/tests/cover/test_settings.py
+index e3ca737..c610aa7 100644
+--- a/hypothesis-python/tests/cover/test_settings.py
++++ b/hypothesis-python/tests/cover/test_settings.py
+@@ -223,6 +223,7 @@ def test_settings_alone():
+ """
+ 
+ 
++@pytest.mark.skip(reason="Test broken in Debian autopkgtest")
+ def test_settings_alone(testdir):
+     script = testdir.makepyfile(TEST_SETTINGS_ALONE)
+     result = testdir.runpytest(script)
+diff --git a/hypothesis-python/tests/numpy/test_deprecation.py b/hypothesis-python/tests/numpy/test_deprecation.py
+index f1338c9..911d5f8 100644
+--- a/hypothesis-python/tests/numpy/test_deprecation.py
++++ b/hypothesis-python/tests/numpy/test_deprecation.py
+@@ -27,6 +27,7 @@ def test_basic_indices_bad_max_dims_warns():
+         nps.basic_indices((3, 3, 3), max_dims=4).example()
+ 
+ 
++@pytest.mark.skip(reason="Test broken in Debian autopkgtest")
+ def test_basic_indices_default_max_dims_does_not_warn():
+     with catch_warnings(record=True) as record:
+         nps.basic_indices((3, 3, 3)).example()
+diff --git a/hypothesis-python/tests/numpy/test_import.py b/hypothesis-python/tests/numpy/test_import.py
+index 495c60e..9bf7d19 100644
+--- a/hypothesis-python/tests/numpy/test_import.py
++++ b/hypothesis-python/tests/numpy/test_import.py
+@@ -8,6 +8,8 @@
+ # v. 2.0. If a copy of the MPL was not distributed with this file, You can
+ # obtain one at https://mozilla.org/MPL/2.0/.
+ 
++import pytest
++
+ SHOULD_NOT_IMPORT_NUMPY = """
+ import sys
+ from hypothesis import given, strategies as st
+@@ -18,6 +20,7 @@ def test_no_numpy_import(x):
+ """
+ 
+ 
++@pytest.mark.skip(reason="Test broken in Debian autopkgtest")
+ def test_hypothesis_is_not_the_first_to_import_numpy(testdir):
+     # We only import numpy if the user did so first.
+     result = testdir.runpytest(testdir.makepyfile(SHOULD_NOT_IMPORT_NUMPY))

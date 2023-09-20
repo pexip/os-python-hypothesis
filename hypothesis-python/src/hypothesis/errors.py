@@ -1,25 +1,20 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 
 class HypothesisException(Exception):
     """Generic parent class for exceptions thrown by Hypothesis."""
 
 
-class CleanupFailed(HypothesisException):
-    """At least one cleanup task failed and no other exception was raised."""
+class _Trimmable(HypothesisException):
+    """Hypothesis can trim these tracebacks even if they're raised internally."""
 
 
 class UnsatisfiedAssumption(HypothesisException):
@@ -37,12 +32,10 @@ class NoSuchExample(HypothesisException):
     """
 
     def __init__(self, condition_string, extra=""):
-        super().__init__(
-            "No examples found of condition %s%s" % (condition_string, extra)
-        )
+        super().__init__(f"No examples found of condition {condition_string}{extra}")
 
 
-class Unsatisfiable(HypothesisException):
+class Unsatisfiable(_Trimmable):
     """We ran out of time or examples before we could find enough examples
     which satisfy the assumptions of this hypothesis.
 
@@ -55,7 +48,7 @@ class Unsatisfiable(HypothesisException):
     """
 
 
-class Flaky(HypothesisException):
+class Flaky(_Trimmable):
     """This function appears to fail non-deterministically: We have seen it
     fail when passed this example at least once, but a subsequent invocation
     did not fail.
@@ -72,7 +65,7 @@ class Flaky(HypothesisException):
     """
 
 
-class InvalidArgument(HypothesisException, TypeError):
+class InvalidArgument(_Trimmable, TypeError):
     """Used to indicate that the arguments to a Hypothesis function were in
     some manner incorrect."""
 
@@ -82,7 +75,7 @@ class ResolutionFailed(InvalidArgument):
 
     Type inference is best-effort, so this only happens when an
     annotation exists but could not be resolved for a required argument
-    to the target of ``builds()``, or where the user passed ``infer``.
+    to the target of ``builds()``, or where the user passed ``...``.
     """
 
 
@@ -90,7 +83,7 @@ class InvalidState(HypothesisException):
     """The system is not in a state where you were allowed to do that."""
 
 
-class InvalidDefinition(HypothesisException, TypeError):
+class InvalidDefinition(_Trimmable, TypeError):
     """Used to indicate that a class definition was not well put together and
     has something wrong with it."""
 
@@ -99,13 +92,8 @@ class HypothesisWarning(HypothesisException, Warning):
     """A generic warning issued by Hypothesis."""
 
 
-class FailedHealthCheck(HypothesisWarning):
-    """Raised when a test fails a preliminary healthcheck that occurs before
-    execution."""
-
-    def __init__(self, message, check):
-        super().__init__(message)
-        self.health_check = check
+class FailedHealthCheck(_Trimmable):
+    """Raised when a test fails a healthcheck."""
 
 
 class NonInteractiveExampleWarning(HypothesisWarning):
@@ -131,12 +119,21 @@ class Frozen(HypothesisException):
     after freeze() has been called."""
 
 
-class MultipleFailures(HypothesisException):
-    """Indicates that Hypothesis found more than one distinct bug when testing
-    your code."""
+def __getattr__(name):
+    if name == "MultipleFailures":
+        from hypothesis._settings import note_deprecation
+        from hypothesis.internal.compat import BaseExceptionGroup
+
+        note_deprecation(
+            "MultipleFailures is deprecated; use the builtin `BaseExceptionGroup` type "
+            "instead, or `exceptiongroup.BaseExceptionGroup` before Python 3.11",
+            since="2022-08-02",
+            has_codemod=False,  # This would be a great PR though!
+        )
+        return BaseExceptionGroup
 
 
-class DeadlineExceeded(HypothesisException):
+class DeadlineExceeded(_Trimmable):
     """Raised when an individual test body has taken too long to run."""
 
     def __init__(self, runtime, deadline):
@@ -146,6 +143,9 @@ class DeadlineExceeded(HypothesisException):
         )
         self.runtime = runtime
         self.deadline = deadline
+
+    def __reduce__(self):
+        return (type(self), (self.runtime, self.deadline))
 
 
 class StopTest(BaseException):

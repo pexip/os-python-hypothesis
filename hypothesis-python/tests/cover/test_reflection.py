@@ -1,44 +1,40 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import sys
 from copy import deepcopy
 from datetime import time
-from functools import partial
-from inspect import FullArgSpec, getfullargspec
+from functools import partial, wraps
+from inspect import Parameter, Signature, signature
+from textwrap import dedent
 from unittest.mock import MagicMock, Mock, NonCallableMagicMock, NonCallableMock
 
 import pytest
+from pytest import raises
 
-from hypothesis import strategies as st
+from hypothesis import given, strategies as st
 from hypothesis.internal import reflection
 from hypothesis.internal.reflection import (
-    arg_string,
     convert_keyword_arguments,
     convert_positional_arguments,
     define_function_signature,
-    fully_qualified_name,
     function_digest,
     get_pretty_function_description,
+    get_signature,
+    is_first_param_referenced_in_function,
     is_mock,
     proxies,
+    repr_call,
     required_args,
     source_exec_as_module,
-    unbind_method,
 )
-from tests.common.utils import checks_deprecated_behaviour, raises
 
 
 def do_conversion_test(f, args, kwargs):
@@ -63,16 +59,6 @@ def test_simple_conversion():
 
     do_conversion_test(foo, (1, 0), {"c": 2})
     do_conversion_test(foo, (1,), {"c": 2, "b": "foo"})
-
-
-def test_populates_defaults():
-    def bar(x=[], y=1):
-        pass
-
-    assert convert_keyword_arguments(bar, (), {}) == (([], 1), {})
-    assert convert_keyword_arguments(bar, (), {"y": 42}) == (([], 42), {})
-    do_conversion_test(bar, (), {})
-    do_conversion_test(bar, (1,), {})
 
 
 def test_leaves_unknown_kwargs_in_dict():
@@ -125,22 +111,19 @@ def test_errors_on_extra_kwargs():
     def foo(a):
         pass
 
-    with raises(TypeError) as e:
+    with raises(TypeError, match="keyword"):
         convert_keyword_arguments(foo, (1,), {"b": 1})
-    assert "keyword" in e.value.args[0]
 
-    with raises(TypeError) as e2:
+    with raises(TypeError, match="keyword"):
         convert_keyword_arguments(foo, (1,), {"b": 1, "c": 2})
-    assert "keyword" in e2.value.args[0]
 
 
 def test_positional_errors_if_too_many_args():
     def foo(a):
         pass
 
-    with raises(TypeError) as e:
+    with raises(TypeError, match="too many positional arguments"):
         convert_positional_arguments(foo, (1, 2), {})
-    assert "2 given" in e.value.args[0]
 
 
 def test_positional_errors_if_too_few_args():
@@ -162,18 +145,16 @@ def test_positional_errors_if_given_bad_kwargs():
     def foo(a):
         pass
 
-    with raises(TypeError) as e:
+    with raises(TypeError, match="missing a required argument: 'a'"):
         convert_positional_arguments(foo, (), {"b": 1})
-    assert "unexpected keyword argument" in e.value.args[0]
 
 
 def test_positional_errors_if_given_duplicate_kwargs():
     def foo(a):
         pass
 
-    with raises(TypeError) as e:
+    with raises(TypeError, match="multiple values"):
         convert_positional_arguments(foo, (2,), {"a": 1})
-    assert "multiple values" in e.value.args[0]
 
 
 def test_names_of_functions_are_pretty():
@@ -253,9 +234,10 @@ def test_arg_string_is_in_order():
     def foo(c, a, b, f, a1):
         pass
 
-    assert arg_string(foo, (1, 2, 3, 4, 5), {}) == "c=1, a=2, b=3, f=4, a1=5"
+    assert repr_call(foo, (1, 2, 3, 4, 5), {}) == "foo(c=1, a=2, b=3, f=4, a1=5)"
     assert (
-        arg_string(foo, (1, 2), {"b": 3, "f": 4, "a1": 5}) == "c=1, a=2, b=3, f=4, a1=5"
+        repr_call(foo, (1, 2), {"b": 3, "f": 4, "a1": 5})
+        == "foo(c=1, a=2, b=3, f=4, a1=5)"
     )
 
 
@@ -264,8 +246,8 @@ def test_varkwargs_are_sorted_and_after_real_kwargs():
         pass
 
     assert (
-        arg_string(foo, (), {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6})
-        == "d=4, e=5, f=6, a=1, b=2, c=3"
+        repr_call(foo, (), {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6})
+        == "foo(d=4, e=5, f=6, a=1, b=2, c=3)"
     )
 
 
@@ -273,50 +255,21 @@ def test_varargs_come_without_equals():
     def foo(a, *args):
         pass
 
-    assert arg_string(foo, (1, 2, 3, 4), {}) == "2, 3, 4, a=1"
+    assert repr_call(foo, (1, 2, 3, 4), {}) == "foo(2, 3, 4, a=1)"
 
 
 def test_can_mix_varargs_and_varkwargs():
     def foo(*args, **kwargs):
         pass
 
-    assert arg_string(foo, (1, 2, 3), {"c": 7}) == "1, 2, 3, c=7"
+    assert repr_call(foo, (1, 2, 3), {"c": 7}) == "foo(1, 2, 3, c=7)"
 
 
 def test_arg_string_does_not_include_unprovided_defaults():
     def foo(a, b, c=9, d=10):
         pass
 
-    assert arg_string(foo, (1,), {"b": 1, "d": 11}) == "a=1, b=1, d=11"
-
-
-class A:
-    def f(self):
-        pass
-
-    def g(self):
-        pass
-
-
-class B(A):
-    pass
-
-
-class C(A):
-    def f(self):
-        pass
-
-
-def test_unbind_gives_parent_class_function():
-    assert unbind_method(B().f) == unbind_method(A.f)
-
-
-def test_unbind_distinguishes_different_functions():
-    assert unbind_method(A.f) != unbind_method(A.g)
-
-
-def test_unbind_distinguishes_overridden_functions():
-    assert unbind_method(C().f) != unbind_method(A.f)
+    assert repr_call(foo, (1,), {"b": 1, "d": 11}) == "foo(a=1, b=1, d=11)"
 
 
 def universal_acceptor(*args, **kwargs):
@@ -344,24 +297,18 @@ def has_kwargs(**kwargs):
 
 
 @pytest.mark.parametrize("f", [has_one_arg, has_two_args, has_varargs, has_kwargs])
-def test_copying_preserves_argspec(f):
-    af = getfullargspec(f)
+def test_copying_preserves_signature(f):
+    af = get_signature(f)
     t = define_function_signature("foo", "docstring", af)(universal_acceptor)
-    at = getfullargspec(t)
-    assert af.args == at.args
-    assert af.varargs == at.varargs
-    assert af.varkw == at.varkw
-    assert len(af.defaults or ()) == len(at.defaults or ())
-    assert af.kwonlyargs == at.kwonlyargs
-    assert af.kwonlydefaults == at.kwonlydefaults
-    assert af.annotations == at.annotations
+    at = get_signature(t)
+    assert af == at
 
 
 def test_name_does_not_clash_with_function_names():
     def f():
         pass
 
-    @define_function_signature("f", "A docstring for f", getfullargspec(f))
+    @define_function_signature("f", "A docstring for f", signature(f))
     def g():
         pass
 
@@ -370,29 +317,29 @@ def test_name_does_not_clash_with_function_names():
 
 def test_copying_sets_name():
     f = define_function_signature(
-        "hello_world", "A docstring for hello_world", getfullargspec(has_two_args)
+        "hello_world", "A docstring for hello_world", signature(has_two_args)
     )(universal_acceptor)
     assert f.__name__ == "hello_world"
 
 
 def test_copying_sets_docstring():
     f = define_function_signature(
-        "foo", "A docstring for foo", getfullargspec(has_two_args)
+        "foo", "A docstring for foo", signature(has_two_args)
     )(universal_acceptor)
     assert f.__doc__ == "A docstring for foo"
 
 
 def test_uses_defaults():
     f = define_function_signature(
-        "foo", "A docstring for foo", getfullargspec(has_a_default)
+        "foo", "A docstring for foo", signature(has_a_default)
     )(universal_acceptor)
     assert f(3, 2) == ((3, 2, 1), {})
 
 
 def test_uses_varargs():
-    f = define_function_signature(
-        "foo", "A docstring for foo", getfullargspec(has_varargs)
-    )(universal_acceptor)
+    f = define_function_signature("foo", "A docstring for foo", signature(has_varargs))(
+        universal_acceptor
+    )
     assert f(1, 2) == ((1, 2), {})
 
 
@@ -426,120 +373,44 @@ def test_define_function_signature_works_with_conflicts():
     define_function_signature(
         "hello",
         "A docstring for hello",
-        FullArgSpec(
-            args=("f",),
-            varargs=None,
-            varkw=None,
-            defaults=None,
-            kwonlyargs=[],
-            kwonlydefaults=None,
-            annotations={},
-        ),
+        Signature(parameters=[Parameter("f", Parameter.POSITIONAL_OR_KEYWORD)]),
     )(accepts_everything)(1)
 
     define_function_signature(
         "hello",
         "A docstring for hello",
-        FullArgSpec(
-            args=(),
-            varargs="f",
-            varkw=None,
-            defaults=None,
-            kwonlyargs=[],
-            kwonlydefaults=None,
-            annotations={},
-        ),
+        Signature(parameters=[Parameter("f", Parameter.VAR_POSITIONAL)]),
     )(accepts_everything)(1)
 
     define_function_signature(
         "hello",
         "A docstring for hello",
-        FullArgSpec(
-            args=(),
-            varargs=None,
-            varkw="f",
-            defaults=None,
-            kwonlyargs=[],
-            kwonlydefaults=None,
-            annotations={},
-        ),
+        Signature(parameters=[Parameter("f", Parameter.VAR_KEYWORD)]),
     )(accepts_everything)()
 
     define_function_signature(
         "hello",
         "A docstring for hello",
-        FullArgSpec(
-            args=("f", "f_3"),
-            varargs="f_1",
-            varkw="f_2",
-            defaults=None,
-            kwonlyargs=[],
-            kwonlydefaults=None,
-            annotations={},
+        Signature(
+            parameters=[
+                Parameter("f", Parameter.POSITIONAL_OR_KEYWORD),
+                Parameter("f_3", Parameter.POSITIONAL_OR_KEYWORD),
+                Parameter("f_1", Parameter.VAR_POSITIONAL),
+                Parameter("f_2", Parameter.VAR_KEYWORD),
+            ]
         ),
     )(accepts_everything)(1, 2)
 
 
-def test_define_function_signature_validates_arguments():
-    with raises(ValueError):
-        define_function_signature(
-            "hello_world",
-            None,
-            FullArgSpec(
-                args=["a b"],
-                varargs=None,
-                varkw=None,
-                defaults=None,
-                kwonlyargs=[],
-                kwonlydefaults=None,
-                annotations={},
-            ),
-        )
-
-
 def test_define_function_signature_validates_function_name():
+    define_function_signature("hello_world", None, Signature())
     with raises(ValueError):
-        define_function_signature(
-            "hello world",
-            None,
-            FullArgSpec(
-                args=["a", "b"],
-                varargs=None,
-                varkw=None,
-                defaults=None,
-                kwonlyargs=[],
-                kwonlydefaults=None,
-                annotations={},
-            ),
-        )
+        define_function_signature("hello world", None, Signature())
 
 
 class Container:
     def funcy(self):
         pass
-
-
-def test_fully_qualified_name():
-    assert (
-        fully_qualified_name(test_copying_preserves_argspec)
-        == "tests.cover.test_reflection.test_copying_preserves_argspec"
-    )
-    assert (
-        fully_qualified_name(Container.funcy)
-        == "tests.cover.test_reflection.Container.funcy"
-    )
-    assert (
-        fully_qualified_name(fully_qualified_name)
-        == "hypothesis.internal.reflection.fully_qualified_name"
-    )
-
-
-def test_qualname_of_function_with_none_module_is_name():
-    def f():
-        pass
-
-    f.__module__ = None
-    assert fully_qualified_name(f)[-1] == "f"
 
 
 def test_can_proxy_functions_with_mixed_args_and_varargs():
@@ -568,7 +439,7 @@ def test_can_delegate_to_a_function_with_no_positional_args():
     "func,args,expected",
     [
         (lambda: None, (), None),
-        (lambda a: a ** 2, (2,), 4),
+        (lambda a: a**2, (2,), 4),
         (lambda *a: a, [1, 2, 3], (1, 2, 3)),
     ],
 )
@@ -595,8 +466,8 @@ def test_can_handle_unicode_repr():
     def foo(x):
         pass
 
-    assert arg_string(foo, [Snowman()], {}) == "x=☃"
-    assert arg_string(foo, [], {"x": Snowman()}) == "x=☃"
+    assert repr_call(foo, [Snowman()], {}) == "foo(x=☃)"
+    assert repr_call(foo, [], {"x": Snowman()}) == "foo(x=☃)"
 
 
 class NoRepr:
@@ -607,23 +478,23 @@ def test_can_handle_repr_on_type():
     def foo(x):
         pass
 
-    assert arg_string(foo, [Snowman], {}) == "x=Snowman"
-    assert arg_string(foo, [NoRepr], {}) == "x=NoRepr"
+    assert repr_call(foo, [Snowman], {}) == "foo(x=Snowman)"
+    assert repr_call(foo, [NoRepr], {}) == "foo(x=NoRepr)"
 
 
 def test_can_handle_repr_of_none():
     def foo(x):
         pass
 
-    assert arg_string(foo, [None], {}) == "x=None"
-    assert arg_string(foo, [], {"x": None}) == "x=None"
+    assert repr_call(foo, [None], {}) == "foo(x=None)"
+    assert repr_call(foo, [], {"x": None}) == "foo(x=None)"
 
 
 def test_kwargs_appear_in_arg_string():
     def varargs(*args, **kwargs):
         pass
 
-    assert "x=1" in arg_string(varargs, (), {"x": 1})
+    assert "x=1" in repr_call(varargs, (), {"x": 1})
 
 
 def test_is_mock_with_negative_cases():
@@ -707,17 +578,135 @@ def test_overlapping_posarg_kwarg_fails():
         st.times(time.min, time.max, st.none(), timezones=st.just(None)).validate()
 
 
-@checks_deprecated_behaviour
-def test_fails_to_detect_kwarg_with_default_value():
-    # Unfortunately we can't detect that this is an error, so you only get
-    # the warning about passing an argument positionally.  At least it warns!
-    st.floats(0, 1, False, allow_nan=None).validate()
+def test_inline_given_handles_self():
+    # Regression test for https://github.com/HypothesisWorks/hypothesis/issues/961
+    class Cls:
+        def method(self, **kwargs):
+            assert isinstance(self, Cls)
+            assert kwargs["k"] is sentinel
+
+    sentinel = object()
+    given(k=st.just(sentinel))(Cls().method)()
 
 
-def test_repr_suggests_kwargs_for_deprecated_posargs():
-    # We don't get a deprecation warning here because we only instantiate the lazy
-    # wrapper, not the underlying strategy.  Note that this omits posargs that carry
-    # their default value from the resulting repr - it's "how to get this strategy",
-    # not "here's exactly what you passed in" (usually but not always the same).
-    strat = st.floats(0, None, False, True)
-    assert repr(strat) == "floats(min_value=0, allow_infinity=True, allow_nan=False)"
+def logged(f):
+    @wraps(f)
+    def wrapper(*a, **kw):
+        print("I was called")
+        return f(*a, **kw)
+
+    return wrapper
+
+
+class Bar:
+    @logged
+    def __init__(self, i: int):
+        pass
+
+
+@given(st.builds(Bar))
+def test_issue_2495_regression(_):
+    """See https://github.com/HypothesisWorks/hypothesis/issues/2495"""
+
+
+@pytest.mark.skipif(
+    sys.version_info[:2] >= (3, 11),
+    reason="handled upstream in https://github.com/python/cpython/pull/92065",
+)
+def test_error_on_keyword_parameter_name():
+    def f(source):
+        pass
+
+    f.__signature__ = Signature(
+        parameters=[Parameter("from", Parameter.KEYWORD_ONLY)],
+        return_annotation=Parameter.empty,
+    )
+
+    with pytest.raises(ValueError, match="SyntaxError because `from` is a keyword"):
+        get_signature(f)
+
+
+def test_param_is_called_within_func():
+    def f(any_name):
+        any_name()
+
+    assert is_first_param_referenced_in_function(f)
+
+
+def test_param_is_called_within_subfunc():
+    def f(any_name):
+        def f2():
+            any_name()
+
+    assert is_first_param_referenced_in_function(f)
+
+
+def test_param_is_not_called_within_func():
+    def f(any_name):
+        pass
+
+    assert not is_first_param_referenced_in_function(f)
+
+
+def test_param_called_within_defaults_on_error():
+    # Create a function object for which we cannot retrieve the source.
+    f = compile("lambda: ...", "_.py", "eval")
+    assert is_first_param_referenced_in_function(f)
+
+
+def _prep_source(*pairs):
+    return [
+        pytest.param(dedent(x).strip(), dedent(y).strip().encode(), id=f"case-{i}")
+        for i, (x, y) in enumerate(pairs)
+    ]
+
+
+@pytest.mark.parametrize(
+    "src, clean",
+    _prep_source(
+        ("", ""),
+        ("def test(): pass", "def test(): pass"),
+        ("def invalid syntax", "def invalid syntax"),
+        ("def also invalid(", "def also invalid("),
+        (
+            """
+            @example(1)
+            @given(st.integers())
+            def test(x):
+                # line comment
+                assert x  # end-of-line comment
+
+
+                "Had some blank lines above"
+            """,
+            """
+            def test(x):
+                assert x
+                "Had some blank lines above"
+            """,
+        ),
+        (
+            """
+            def      \\
+                f(): pass
+            """,
+            """
+            def\\
+                f(): pass
+            """,
+        ),
+        (
+            """
+            @dec
+            async def f():
+                pass
+            """,
+            """
+            async def f():
+                pass
+            """,
+        ),
+    ),
+)
+def test_clean_source(src, clean):
+    assert reflection._clean_source(src).splitlines() == clean.splitlines()

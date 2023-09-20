@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import attr
 
@@ -94,7 +89,7 @@ class GenericCache:
             if self.max_size == self.__pinned_entry_count:
                 raise ValueError(
                     "Cannot increase size of cache where all keys have been pinned."
-                )
+                ) from None
             entry = Entry(key, value, self.new_entry(key, value))
             if len(self.data) >= self.max_size:
                 evicted = self.data[0]
@@ -141,7 +136,7 @@ class GenericCache:
         i = self.keys_to_indices[key]
         entry = self.data[i]
         if entry.pins == 0:
-            raise ValueError("Key %r has not been pinned" % (key,))
+            raise ValueError(f"Key {key!r} has not been pinned")
         entry.pins -= 1
         if entry.pins == 0:
             self.__pinned_entry_count -= 1
@@ -159,7 +154,7 @@ class GenericCache:
         self.__pinned_entry_count = 0
 
     def __repr__(self):
-        return "{%s}" % (", ".join("%r: %r" % (e.key, e.value) for e in self.data),)
+        return "{" + ", ".join(f"{e.key!r}: {e.value!r}" for e in self.data) + "}"
 
     def new_entry(self, key, value):
         """Called when a key is written that does not currently appear in the
@@ -267,3 +262,16 @@ class LRUReusedCache(GenericCache):
         score[0] = 2
         score[1] = self.tick()
         return score
+
+    def pin(self, key):
+        try:
+            super().pin(key)
+        except KeyError:
+            # The whole point of an LRU cache is that it might drop things for you
+            assert key not in self.keys_to_indices
+
+    def unpin(self, key):
+        try:
+            super().unpin(key)
+        except KeyError:
+            assert key not in self.keys_to_indices

@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import os.path
 
@@ -19,6 +14,7 @@ from hypothesis import assume, core, find, given, settings, strategies as st
 from hypothesis.database import ExampleDatabase, InMemoryExampleDatabase
 from hypothesis.errors import NoSuchExample, Unsatisfiable
 from hypothesis.internal.entropy import deterministic_PRNG
+
 from tests.common.utils import all_values, non_covering_examples
 
 
@@ -31,7 +27,7 @@ def test_saves_incremental_steps_in_database():
     database = InMemoryExampleDatabase()
     find(
         st.binary(min_size=10),
-        lambda x: has_a_non_zero_byte(x),
+        has_a_non_zero_byte,
         settings=settings(database=database),
         database_key=key,
     )
@@ -67,30 +63,41 @@ def test_clears_out_database_as_things_get_boring():
         if not keys:
             break
     else:
-        assert False
+        raise AssertionError
 
 
 def test_trashes_invalid_examples():
     key = b"a database key"
     database = InMemoryExampleDatabase()
-    finicky = False
+
+    invalid = set()
 
     def stuff():
         try:
-            find(
-                st.binary(min_size=100),
-                lambda x: assume(not finicky) and has_a_non_zero_byte(x),
+
+            def condition(x):
+                assume(x not in invalid)
+                return not invalid and has_a_non_zero_byte(x)
+
+            return find(
+                st.binary(min_size=5),
+                condition,
                 settings=settings(database=database),
                 database_key=key,
             )
-        except Unsatisfiable:
+        except (Unsatisfiable, NoSuchExample):
             pass
 
-    stuff()
+    with deterministic_PRNG():
+        value = stuff()
+
     original = len(all_values(database))
     assert original > 1
-    finicky = True
-    stuff()
+
+    invalid.add(value)
+    with deterministic_PRNG():
+        stuff()
+
     assert len(all_values(database)) < original
 
 

@@ -1,17 +1,12 @@
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
-# Most of this work is copyright (C) 2013-2020 David R. MacIver
-# (david@drmaciver.com), but it contains contributions by others. See
-# CONTRIBUTING.rst for a full list of people who may hold copyright, and
-# consult the git log if you need to determine who owns an individual
-# contribution.
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
 #
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
-#
-# END HEADER
 
 import threading
 from functools import partial
@@ -127,7 +122,7 @@ def test_always_evicts_the_lowest_scoring_value(writes, data):
     evicted = set()
 
     def new_score(key):
-        scores[key] = data.draw(st.integers(0, 1000), label="scores[%r]" % (key,))
+        scores[key] = data.draw(st.integers(0, 1000), label=f"scores[{key!r}]")
         return scores[key]
 
     last_entry = [None]
@@ -144,7 +139,7 @@ def test_always_evicts_the_lowest_scoring_value(writes, data):
             return new_score(key)
 
         def on_evict(self, key, value, score):
-            note("Evicted %r" % (key,))
+            note(f"Evicted {key!r}")
             assert score == scores[key]
             del scores[key]
             if len(scores) > 1:
@@ -321,3 +316,19 @@ def test_cache_is_threadsafe_issue_2433_regression():
         worker.join()
 
     assert not errors
+
+
+def test_pin_and_unpin_are_noops_if_dropped():
+    # See https://github.com/HypothesisWorks/hypothesis/issues/3169
+    cache = LRUReusedCache(max_size=10)
+    cache[30] = True
+    assert 30 in cache
+
+    for i in range(20):
+        cache[i] = False
+
+    assert 30 not in cache
+    cache.pin(30)
+    assert 30 not in cache
+    cache.unpin(30)
+    assert 30 not in cache
