@@ -18,6 +18,7 @@ Standards-Version: 4.5.0
 Homepage: https://github.com/HypothesisWorks/hypothesis
 Vcs-Git: https://salsa.debian.org/python-team/packages/python-hypothesis.git
 Vcs-Browser: https://salsa.debian.org/python-team/packages/python-hypothesis
+XS-Pexip-Upstream: http://deb.debian.org/debian/ bookworm
 
 Package: python3-hypothesis
 Architecture: all
