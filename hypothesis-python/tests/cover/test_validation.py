@@ -9,12 +9,12 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import functools
-import sys
+import warnings
 
 import pytest
 
-from hypothesis import find, given
-from hypothesis.errors import InvalidArgument
+from hypothesis import find, given, strategies as st
+from hypothesis.errors import HypothesisWarning, InvalidArgument
 from hypothesis.internal.validation import check_type
 from hypothesis.strategies import (
     SearchStrategy as ActualSearchStrategy,
@@ -33,6 +33,7 @@ from hypothesis.strategies import (
 )
 from hypothesis.strategies._internal.strategies import check_strategy
 
+from tests.common.debug import check_can_generate_examples, find_any
 from tests.common.utils import fails_with
 
 
@@ -114,28 +115,28 @@ def test_can_put_arguments_in_the_middle():
 
 def test_float_ranges():
     with pytest.raises(InvalidArgument):
-        floats(float("nan"), 0).example()
+        check_can_generate_examples(floats(float("nan"), 0))
     with pytest.raises(InvalidArgument):
-        floats(1, -1).example()
+        check_can_generate_examples(floats(1, -1))
 
 
 def test_float_range_and_allow_nan_cannot_both_be_enabled():
     with pytest.raises(InvalidArgument):
-        floats(min_value=1, allow_nan=True).example()
+        check_can_generate_examples(floats(min_value=1, allow_nan=True))
     with pytest.raises(InvalidArgument):
-        floats(max_value=1, allow_nan=True).example()
+        check_can_generate_examples(floats(max_value=1, allow_nan=True))
 
 
 def test_float_finite_range_and_allow_infinity_cannot_both_be_enabled():
     with pytest.raises(InvalidArgument):
-        floats(0, 1, allow_infinity=True).example()
+        check_can_generate_examples(floats(0, 1, allow_infinity=True))
 
 
 def test_does_not_error_if_min_size_is_bigger_than_default_size():
-    lists(integers(), min_size=50).example()
-    sets(integers(), min_size=50).example()
-    frozensets(integers(), min_size=50).example()
-    lists(integers(), min_size=50, unique=True).example()
+    find_any(lists(integers(), min_size=50))
+    find_any(sets(integers(), min_size=50))
+    find_any(frozensets(integers(), min_size=50))
+    find_any(lists(integers(), min_size=50, unique=True))
 
 
 def test_list_unique_and_unique_by_cannot_both_be_enabled():
@@ -277,11 +278,25 @@ def test_check_strategy_might_suggest_sampled_from():
     check_strategy_(integers(), "passes for our custom coverage check")
 
 
-@pytest.mark.skipif(sys.version_info[:2] >= (3, 8), reason="only on 3.7")
-def test_explicit_error_from_array_api_before_py38():
-    with pytest.raises(
-        RuntimeError, match=r"The Array API standard requires Python 3\.8 or later"
+@pytest.mark.parametrize("codec", ["ascii", "utf-8"])
+def test_warn_on_strings_matching_common_codecs(codec):
+    with pytest.warns(
+        HypothesisWarning,
+        match=f"it seems like you are trying to use the codec {codec!r}",
     ):
-        from hypothesis.extra import array_api
 
-        assert array_api  # avoid unused-name lint error
+        @given(st.text(codec))
+        def f(s):
+            pass
+
+        f()
+
+    # if we reorder, it doesn't warn anymore
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        @given(st.text(codec[1:] + codec[:1]))
+        def f(s):
+            pass
+
+        f()

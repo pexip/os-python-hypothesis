@@ -57,27 +57,26 @@ check out some of the
 .. toctree::
   :maxdepth: 1
   :hidden:
+  :caption: Hypothesis
 
   quickstart
-  details
-  settings
-  data
-  extras
-  ghostwriter
-  django
-  numpy
-  healthchecks
-  database
-  stateful
+  reference/index
+  Type hints <typing>
+  Extras <extras>
+  Examples <examples>
   supported
-  examples
-  community
+  changes
+
+.. toctree::
+  :maxdepth: 1
+  :hidden:
+  :caption: Community
+
+  development
   manifesto
-  endorsements
   usage
   strategies
-  changes
-  development
-  support
   packaging
-  reproducing
+  community
+  support
+  endorsements

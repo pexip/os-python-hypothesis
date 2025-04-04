@@ -67,10 +67,10 @@ RECORD_EXAMPLES = <file>
 
 if os.path.exists(RECORD_EXAMPLES):
     target = None
-    with open(RECORD_EXAMPLES, 'r') as i:
+    with open(RECORD_EXAMPLES, "r", encoding="utf-8") as i:
         seen = set(map(int, i.read().strip().split("\\n")))
 else:
-    target = open(RECORD_EXAMPLES, 'w')
+    target = open(RECORD_EXAMPLES, "w", encoding="utf-8")
 
 @given(st.integers())
 def test_failure(i):
@@ -82,9 +82,12 @@ def test_failure(i):
 """
 
 
-def test_repeats_healthcheck_when_following_seed_instruction(testdir, tmpdir):
+def test_repeats_healthcheck_when_following_seed_instruction(
+    testdir, tmp_path, monkeypatch
+):
+    monkeypatch.delenv("CI", raising=False)
     health_check_test = HEALTH_CHECK_FAILURE.replace(
-        "<file>", repr(str(tmpdir.join("seen")))
+        "<file>", repr(str(tmp_path / "seen"))
     )
 
     script = testdir.makepyfile(health_check_test)

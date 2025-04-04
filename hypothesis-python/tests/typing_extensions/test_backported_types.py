@@ -9,39 +9,47 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import collections
-import sys
-from typing import Callable, DefaultDict, Dict, List, NewType, Type, Union
+from typing import Annotated, Callable, DefaultDict, NewType, Union
 
 import pytest
+import typing_extensions
 from typing_extensions import (
-    Annotated,
     Concatenate,
-    Literal,
+    LiteralString,
     NotRequired,
     ParamSpec,
+    ReadOnly,
     Required,
     TypedDict,
     TypeGuard,
+    TypeIs,
 )
 
-from hypothesis import assume, given, strategies as st
+from hypothesis import HealthCheck, assume, given, settings, strategies as st
 from hypothesis.errors import InvalidArgument
 from hypothesis.strategies import from_type
 from hypothesis.strategies._internal.types import NON_RUNTIME_TYPES
 
-from tests.common.debug import assert_all_examples, find_any
+from tests.common.debug import (
+    assert_all_examples,
+    assert_simple_property,
+    check_can_generate_examples,
+    find_any,
+)
 
 # See also nocover/test_type_lookup.py
 
 
 @pytest.mark.parametrize("value", ["dog", b"goldfish", 42, 63.4, -80.5, False])
 def test_typing_extensions_Literal(value):
-    assert from_type(Literal[value]).example() == value
+    assert_simple_property(
+        from_type(typing_extensions.Literal[value]), lambda v: v == value
+    )
 
 
 @given(st.data())
 def test_typing_extensions_Literal_nested(data):
-    lit = Literal
+    lit = typing_extensions.Literal
     values = [
         (lit["hamster", 0], ("hamster", 0)),
         (lit[26, False, "bunny", 130], (26, False, "bunny", 130)),
@@ -50,7 +58,7 @@ def test_typing_extensions_Literal_nested(data):
         (lit[1, lit[2], 3], {1, 2, 3}),
         (lit[lit[lit[1], lit[2]], lit[lit[3], lit[4]]], {1, 2, 3, 4}),
         # See https://github.com/HypothesisWorks/hypothesis/pull/2886
-        (Union[Literal["hamster"], Literal["bunny"]], {"hamster", "bunny"}),
+        (Union[lit["hamster"], lit["bunny"]], {"hamster", "bunny"}),  # noqa
         (Union[lit[lit[1], lit[2]], lit[lit[3], lit[4]]], {1, 2, 3, 4}),
     ]
     literal_type, flattened_literals = data.draw(st.sampled_from(values))
@@ -69,10 +77,10 @@ def test_simple_typeddict(value):
 
 
 def test_typing_extensions_Type_int():
-    assert from_type(Type[int]).example() is int
+    assert_simple_property(from_type(type[int]), lambda v: v is int)
 
 
-@given(from_type(Type[Union[str, list]]))
+@given(from_type(Union[type[str], type[list]]))
 def test_typing_extensions_Type_Union(ex):
     assert ex in (str, list)
 
@@ -81,9 +89,11 @@ def test_resolves_NewType():
     typ = NewType("T", int)
     nested = NewType("NestedT", typ)
     uni = NewType("UnionT", Union[int, None])
-    assert isinstance(from_type(typ).example(), int)
-    assert isinstance(from_type(nested).example(), int)
-    assert isinstance(from_type(uni).example(), (int, type(None)))
+    assert_simple_property(from_type(typ), lambda x: isinstance(x, int))
+    assert_simple_property(from_type(nested), lambda x: isinstance(x, int))
+    assert_simple_property(from_type(uni), lambda x: isinstance(x, (int, type(None))))
+    find_any(from_type(uni), lambda x: isinstance(x, int))
+    find_any(from_type(uni), lambda x: isinstance(x, type(None)))
 
 
 @given(from_type(DefaultDict[int, int]))
@@ -94,63 +104,13 @@ def test_defaultdict(ex):
     assert all(isinstance(elem, int) for elem in ex.values())
 
 
-@pytest.mark.parametrize(
-    "annotated_type,expected_strategy_repr",
-    [
-        (Annotated[int, "foo"], "integers()"),
-        (Annotated[List[float], "foo"], "lists(floats())"),
-        (Annotated[Annotated[str, "foo"], "bar"], "text()"),
-        (
-            Annotated[Annotated[List[Dict[str, bool]], "foo"], "bar"],
-            "lists(dictionaries(keys=text(), values=booleans()))",
-        ),
-    ],
-)
-def test_typing_extensions_Annotated(annotated_type, expected_strategy_repr):
-    assert repr(st.from_type(annotated_type)) == expected_strategy_repr
-
-
-PositiveInt = Annotated[int, st.integers(min_value=1)]
-MoreThenTenInt = Annotated[PositiveInt, st.integers(min_value=10 + 1)]
-WithTwoStrategies = Annotated[int, st.integers(), st.none()]
-ExtraAnnotationNoStrategy = Annotated[PositiveInt, "metadata"]
-
-
-def arg_positive(x: PositiveInt):
-    assert x > 0
-
-
-def arg_more_than_ten(x: MoreThenTenInt):
-    assert x > 10
-
-
-@given(st.data())
-def test_annotated_positive_int(data):
-    data.draw(st.builds(arg_positive))
-
-
-@given(st.data())
-def test_annotated_more_than_ten(data):
-    data.draw(st.builds(arg_more_than_ten))
-
-
-@given(st.data())
-def test_annotated_with_two_strategies(data):
-    assert data.draw(st.from_type(WithTwoStrategies)) is None
-
-
-@given(st.data())
-def test_annotated_extra_metadata(data):
-    assert data.draw(st.from_type(ExtraAnnotationNoStrategy)) > 0
-
-
 @pytest.mark.parametrize("non_runtime_type", NON_RUNTIME_TYPES)
 def test_non_runtime_type_cannot_be_resolved(non_runtime_type):
     strategy = st.from_type(non_runtime_type)
     with pytest.raises(
         InvalidArgument, match="there is no such thing as a runtime instance"
     ):
-        strategy.example()
+        check_can_generate_examples(strategy)
 
 
 @pytest.mark.parametrize("non_runtime_type", NON_RUNTIME_TYPES)
@@ -161,7 +121,6 @@ def test_non_runtime_type_cannot_be_registered(non_runtime_type):
         st.register_type_strategy(non_runtime_type, st.none())
 
 
-@pytest.mark.skipif(sys.version_info <= (3, 7), reason="requires python3.8 or higher")
 def test_callable_with_concatenate():
     P = ParamSpec("P")
     func_type = Callable[Concatenate[int, P], None]
@@ -170,13 +129,12 @@ def test_callable_with_concatenate():
         InvalidArgument,
         match="Hypothesis can't yet construct a strategy for instances of a Callable type",
     ):
-        strategy.example()
+        check_can_generate_examples(strategy)
 
     with pytest.raises(InvalidArgument, match="Cannot register generic type"):
         st.register_type_strategy(func_type, st.none())
 
 
-@pytest.mark.skipif(sys.version_info <= (3, 7), reason="requires python3.8 or higher")
 def test_callable_with_paramspec():
     P = ParamSpec("P")
     func_type = Callable[P, None]
@@ -185,24 +143,24 @@ def test_callable_with_paramspec():
         InvalidArgument,
         match="Hypothesis can't yet construct a strategy for instances of a Callable type",
     ):
-        strategy.example()
+        check_can_generate_examples(strategy)
 
     with pytest.raises(InvalidArgument, match="Cannot register generic type"):
         st.register_type_strategy(func_type, st.none())
 
 
-@pytest.mark.skipif(sys.version_info <= (3, 7), reason="requires python3.8 or higher")
-def test_callable_return_typegard_type():
-    strategy = st.from_type(Callable[[], TypeGuard[int]])
+@pytest.mark.parametrize("typ", [TypeGuard, TypeIs])
+def test_callable_return_typegard_type(typ):
+    strategy = st.from_type(Callable[[], typ[int]])
     with pytest.raises(
         InvalidArgument,
         match="Hypothesis cannot yet construct a strategy for callables "
-        "which are PEP-647 TypeGuards",
+        "which are PEP-647 TypeGuards or PEP-742 TypeIs",
     ):
-        strategy.example()
+        check_can_generate_examples(strategy)
 
     with pytest.raises(InvalidArgument, match="Cannot register generic type"):
-        st.register_type_strategy(Callable[[], TypeGuard[int]], st.none())
+        st.register_type_strategy(Callable[[], typ[int]], st.none())
 
 
 class Movie(TypedDict):  # implicitly total=True
@@ -283,6 +241,30 @@ def test_required_and_not_required_keys(check, condition):
     check(from_type(Novel), condition)
 
 
+class DeeplyNestedQualifiers(TypedDict):
+    a: ReadOnly[Required[int]]
+    b: NotRequired[Annotated[ReadOnly[int], "metadata"]]
+    c: Annotated[ReadOnly[NotRequired[str]], "metadata"]
+
+
+@pytest.mark.parametrize(
+    "check,condition",
+    [
+        pytest.param(
+            assert_all_examples,
+            lambda novel: "a" in novel,
+            id="a-is-required",
+        ),
+        pytest.param(find_any, lambda novel: "b" in novel, id="b-may-be-present"),
+        pytest.param(find_any, lambda novel: "b" not in novel, id="b-may-be-absent"),
+        pytest.param(find_any, lambda novel: "c" in novel, id="c-may-be-present"),
+        pytest.param(find_any, lambda novel: "c" not in novel, id="c-may-be-absent"),
+    ],
+)
+def test_required_and_not_required_keys_deeply_nested(check, condition):
+    check(from_type(DeeplyNestedQualifiers), condition)
+
+
 def test_typeddict_error_msg():
     with pytest.raises(TypeError, match="is not valid as type argument"):
 
@@ -293,3 +275,66 @@ def test_typeddict_error_msg():
 
         class Bar(TypedDict):
             attr: NotRequired
+
+    with pytest.raises(TypeError, match="is not valid as type argument"):
+
+        class Baz(TypedDict):
+            attr: ReadOnly
+
+
+def test_literal_string_is_just_a_string():
+    assert_all_examples(from_type(LiteralString), lambda thing: isinstance(thing, str))
+
+
+class Foo:
+    def __init__(self, x):
+        pass
+
+
+class Bar(Foo):
+    pass
+
+
+class Baz(Foo):
+    pass
+
+
+st.register_type_strategy(Bar, st.builds(Bar, st.integers()))
+st.register_type_strategy(Baz, st.builds(Baz, st.integers()))
+
+T = typing_extensions.TypeVar("T")
+T_int = typing_extensions.TypeVar("T_int", bound=int)
+
+
+@pytest.mark.parametrize(
+    "var,expected",
+    [
+        (typing_extensions.TypeVar("V"), object),
+        # Bound:
+        (typing_extensions.TypeVar("V", bound=int), int),
+        (typing_extensions.TypeVar("V", bound=Foo), (Bar, Baz)),
+        (typing_extensions.TypeVar("V", bound=Union[int, str]), (int, str)),
+        # Constraints:
+        (typing_extensions.TypeVar("V", int, str), (int, str)),
+        # Default:
+        (typing_extensions.TypeVar("V", default=int), int),
+        (typing_extensions.TypeVar("V", default=T), object),
+        (typing_extensions.TypeVar("V", default=Foo), (Bar, Baz)),
+        (typing_extensions.TypeVar("V", default=Union[int, str]), (int, str)),
+        (typing_extensions.TypeVar("V", default=T_int), int),
+        (typing_extensions.TypeVar("V", default=T_int, bound=int), int),
+        (typing_extensions.TypeVar("V", int, str, default=int), (int, str)),
+        # This case is not correct from typing's perspective, but its not
+        # our job to very this, static type-checkers should do that:
+        (typing_extensions.TypeVar("V", default=T_int, bound=str), (int, str)),
+    ],
+)
+@settings(suppress_health_check=[HealthCheck.too_slow])
+@given(data=st.data())
+def test_typevar_type_is_consistent(data, var, expected):
+    strat = st.from_type(var)
+    v1 = data.draw(strat)
+    v2 = data.draw(strat)
+    assume(v1 != v2)  # Values may vary, just not types
+    assert type(v1) == type(v2)
+    assert isinstance(v1, expected)

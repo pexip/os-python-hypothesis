@@ -15,39 +15,29 @@ import re
 import socket
 import unittest
 import unittest.mock
+from collections.abc import KeysView, Sequence, Sized, ValuesView
 from decimal import Decimal
 from pathlib import Path
 from textwrap import dedent
 from types import FunctionType, ModuleType
-from typing import (
-    Any,
-    FrozenSet,
-    KeysView,
-    List,
-    Match,
-    Pattern,
-    Sequence,
-    Set,
-    Sized,
-    Union,
-    ValuesView,
-)
+from typing import Any, Union
 
 import attr
 import click
 import pytest
 
-from hypothesis import assume
+from hypothesis import HealthCheck, assume, settings
 from hypothesis.errors import InvalidArgument, Unsatisfiable
 from hypothesis.extra import cli, ghostwriter
 from hypothesis.internal.compat import BaseExceptionGroup
 from hypothesis.strategies import builds, from_type, just, lists
+from hypothesis.strategies._internal.core import from_regex
 from hypothesis.strategies._internal.lazy import LazyStrategy
 
 varied_excepts = pytest.mark.parametrize("ex", [(), ValueError, (TypeError, re.error)])
 
 
-def get_test_function(source_code):
+def get_test_function(source_code, settings_decorator=lambda fn: fn):
     # A helper function to get the dynamically-defined test function.
     # Note that this also tests that the module is syntatically-valid,
     # AND free from undefined names, import problems, and so on.
@@ -63,7 +53,7 @@ def get_test_function(source_code):
         if k.startswith(("test_", "Test")) and not isinstance(v, ModuleType)
     ]
     assert len(tests) == 1, tests
-    return tests[0]
+    return settings_decorator(tests[0])
 
 
 @pytest.mark.parametrize(
@@ -111,7 +101,7 @@ def test_ghostwriter_exploits_arguments_with_enum_defaults():
         test()
 
 
-def timsort(seq: Sequence[int]) -> List[int]:
+def timsort(seq: Sequence[int]) -> list[int]:
     return sorted(seq)
 
 
@@ -137,7 +127,7 @@ def non_resolvable_arg(x: NotResolvable):
 
 def test_flattens_one_of_repr():
     strat = from_type(Union[int, Sequence[int]])
-    assert repr(strat).count("one_of(") > 1
+    assert repr(strat).count("one_of(") == 2
     assert ghostwriter._valid_syntax_repr(strat)[1].count("one_of(") == 1
 
 
@@ -149,11 +139,11 @@ def takes_values(x: ValuesView[int]) -> None:
     pass
 
 
-def takes_match(x: Match[bytes]) -> None:
+def takes_match(x: re.Match[bytes]) -> None:
     pass
 
 
-def takes_pattern(x: Pattern[str]) -> None:
+def takes_pattern(x: re.Pattern[str]) -> None:
     pass
 
 
@@ -161,7 +151,7 @@ def takes_sized(x: Sized) -> None:
     pass
 
 
-def takes_frozensets(a: FrozenSet[int], b: FrozenSet[int]) -> None:
+def takes_frozensets(a: frozenset[int], b: frozenset[int]) -> None:
     pass
 
 
@@ -222,7 +212,7 @@ def test_ghostwriter_unittest_style(func, ex):
     assert issubclass(get_test_function(source_code), unittest.TestCase)
 
 
-def no_annotations(foo=None, bar=False):
+def no_annotations(foo=None, *, bar=False):
     pass
 
 
@@ -231,7 +221,7 @@ def test_inference_from_defaults_and_none_booleans_reprs_not_just_and_sampled_fr
     assert "@given(foo=st.none(), bar=st.booleans())" in source_code
 
 
-def hopefully_hashable(foo: Set[Decimal]):
+def hopefully_hashable(foo: set[Decimal]):
     pass
 
 
@@ -272,7 +262,7 @@ class A:
         return json.loads(obj)
 
     @staticmethod
-    def static_sorter(seq: Sequence[int]) -> List[int]:
+    def static_sorter(seq: Sequence[int]) -> list[int]:
         return sorted(seq)
 
 
@@ -341,8 +331,9 @@ def test_run_ghostwriter_roundtrip():
         "lambda v: st.lists(v, max_size=2) | st.dictionaries(st.text(), v, max_size=2)"
         ", max_leaves=2)",
     )
+    s = settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
     try:
-        get_test_function(source_code)()
+        get_test_function(source_code, settings_decorator=s)()
     except (AssertionError, ValueError, BaseExceptionGroup):
         pass
 
@@ -350,7 +341,7 @@ def test_run_ghostwriter_roundtrip():
     source_code = source_code.replace(
         "st.floats()", "st.floats(allow_nan=False, allow_infinity=False)"
     )
-    get_test_function(source_code)()
+    get_test_function(source_code, settings_decorator=s)()
 
 
 @varied_excepts
@@ -431,6 +422,16 @@ def test_unrepr_identity_elem():
             lists(builds(Decimal)),
             {("decimal", "Decimal")},
         ),
+        # find the needed import for from_regex if needed
+        (
+            from_regex(re.compile(".+")),
+            {"re"},
+        ),
+        # but don't add superfluous imports
+        (
+            from_regex(".+"),
+            set(),
+        ),
     ],
 )
 def test_get_imports_for_strategy(strategy, imports):
@@ -451,7 +452,8 @@ def temp_script_file():
             def say_hello():
                 print("Hello world!")
             """
-        )
+        ),
+        encoding="utf-8",
     )
     yield p
     p.unlink()
@@ -471,7 +473,8 @@ def temp_script_file_with_py_function():
             def py():
                 print('A function named "py" has been called')
             """
-        )
+        ),
+        encoding="utf-8",
     )
     yield p
     p.unlink()
@@ -486,7 +489,7 @@ def test_obj_name(temp_script_file, temp_script_file_with_py_function):
     )
     # Windows paths (strings including a "\") should also raise a meaningful UsageError
     with pytest.raises(click.exceptions.UsageError) as e:
-        cli.obj_name("mydirectory\\myscript.py")
+        cli.obj_name(R"mydirectory\myscript.py")
     assert e.match(
         "Remember that the ghostwriter should be passed the name of a module, not a path."
     )
@@ -501,7 +504,7 @@ def test_obj_name(temp_script_file, temp_script_file_with_py_function):
         cli.obj_name(str(temp_script_file))
     assert e.match(
         "Remember that the ghostwriter should be passed the name of a module, not a file."
-        + f"\n\tTry: hypothesis write {temp_script_file.stem}"
+        f"\n\tTry: hypothesis write {temp_script_file.stem}"
     )
     # File names of modules (strings ending in ".py") that define a py function should succeed
     assert isinstance(

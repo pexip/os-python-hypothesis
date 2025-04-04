@@ -1,19 +1,50 @@
 #!/usr/bin/make -f
 
+include /usr/share/dpkg/pkg-info.mk
+
+# Individual tests which fail in buildd or autopkgtest
+SKIP_TESTS = \
+	cli \
+	pytest \
+	test_can_learn_to_normalize_the_unnormalized \
+	test_dateutil_timezones \
+	test_ghostwriter_suggests_submodules_for_empty_toplevel \
+	test_hypothesis_is_not_the_first_to_import_numpy \
+	test_updating_the_file_include_new_shrinkers \
+	test_zoneinfo_timezones \
+	test_adds_note_showing_which_strategy
+
+# Test scripts which cannot be imported, e.g. because they
+# depend on unpackaged Python modules
+IGNORE_TESTS = \
+	tests/codemods \
+	tests/crosshair \
+	tests/dpcontracts \
+	tests/patching
+
+space = $(eval) $(eval)
+concat_with = $(subst $(space),$1,$2)
+
 export LC_ALL=C.UTF-8
 export PYBUILD_NAME=hypothesis
 export PYBUILD_DIR=hypothesis-python
-export PYBUILD_TEST_ARGS=-k 'not dateutil' tests/cover tests/nocover tests/datetime tests/numpy
-# If pytest autoloads the hypothesis plugin, it interferes with the tests 
-export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+ifneq ($(PYBUILD_AUTOPKGTEST),1)
+export PYBUILD_BEFORE_TEST={interpreter} setup.py egg_info; cp -r {dir}/src/*.egg-info {build_dir}
+export PYBUILD_AFTER_TEST=rm -r {dir}/src/*.egg-info {build_dir}/*.egg-info
+endif
+export PYBUILD_TEST_ARGS=$(if $(SKIP_TESTS),-k 'not ($(call concat_with,$(space)or$(space),$(SKIP_TESTS)))') $(addprefix --ignore=,$(IGNORE_TESTS)) tests
 
 %:
 	dh $@ --buildsystem=pybuild
 
 execute_after_dh_auto_build:
 ifeq ($(filter nodoc,$(DEB_BUILD_PROFILES)),)
-	PYTHONPATH=hypothesis-python/src \
+	PYTHONPATH=$(shell pybuild --print build_dir --interpreter python3) \
 	    http_proxy='127.0.0.1:9' \
 	    https_proxy='127.0.0.1:9' \
 	    python3 -m sphinx -N -b html hypothesis-python/docs/ $(CURDIR)/.pybuild/docs/html/
 endif
+
+execute_before_dh_installman:
+	sed -e 's/@VERSION@/$(DEB_VERSION_UPSTREAM)/g' debian/hypothesis.1.in > debian/hypothesis.1
+

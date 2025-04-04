@@ -9,23 +9,28 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import datetime as dt
+import sys
+import warnings
 
 import pytest
-import pytz
-from dateutil.tz import datetime_exists
 
-from hypothesis import assume, given
-from hypothesis.errors import InvalidArgument
-from hypothesis.extra.pytz import timezones
+from hypothesis import assume, given, strategies as st
+from hypothesis.errors import InvalidArgument, StopTest
 from hypothesis.strategies import data, datetimes, just, sampled_from, times
 from hypothesis.strategies._internal.datetime import datetime_does_not_exist
 
-from tests.common.debug import (
-    assert_all_examples,
-    assert_can_trigger_event,
-    find_any,
-    minimal,
-)
+from tests.common.debug import assert_all_examples, find_any, minimal
+from tests.common.utils import Why, xfail_on_crosshair
+
+with warnings.catch_warnings():
+    if sys.version_info[:2] >= (3, 12):
+        # See https://github.com/stub42/pytz/issues/105 and
+        # https://github.com/dateutil/dateutil/pull/1285/
+        warnings.simplefilter("ignore", DeprecationWarning)
+    import pytz
+    from dateutil.tz import datetime_exists
+
+from hypothesis.extra.pytz import timezones
 
 
 def test_utc_is_minimal():
@@ -76,8 +81,9 @@ def test_overflow_in_simplify():
 def test_timezones_arg_to_datetimes_must_be_search_strategy():
     with pytest.raises(InvalidArgument):
         datetimes(timezones=pytz.all_timezones).validate()
+
+    tz = [pytz.timezone(t) for t in pytz.all_timezones]
     with pytest.raises(InvalidArgument):
-        tz = [pytz.timezone(t) for t in pytz.all_timezones]
         datetimes(timezones=tz).validate()
 
 
@@ -98,6 +104,7 @@ def test_time_bounds_must_be_naive(name, val):
         times(**{name: val}).validate()
 
 
+@xfail_on_crosshair(Why.undiscovered)
 @pytest.mark.parametrize(
     "bound",
     [
@@ -106,10 +113,25 @@ def test_time_bounds_must_be_naive(name, val):
     ],
 )
 def test_can_trigger_error_in_draw_near_boundary(bound):
-    assert_can_trigger_event(
-        datetimes(**bound, timezones=timezones()),
-        lambda event: "Failed to draw a datetime" in event,
-    )
+    found = False
+
+    # this would be better written with find_any, but I couldn't get rewriting
+    # with st.composite and assuming the event condition to work.
+    # https://github.com/HypothesisWorks/hypothesis/pull/4229#discussion_r1907993831
+    @given(st.data())
+    def f(data):
+        try:
+            data.draw(datetimes(**bound, timezones=timezones()))
+        except StopTest:
+            pass
+        if "Failed to draw a datetime" in data.conjecture_data.events.get(
+            "invalid because", ""
+        ):
+            nonlocal found
+            found = True
+
+    f()
+    assert found
 
 
 @given(data(), datetimes(), datetimes())
@@ -141,6 +163,7 @@ def test_datetimes_stay_within_naive_bounds(data, lo, hi):
         },
     ],
 )
+@xfail_on_crosshair(Why.symbolic_outside_context, strict=False)
 def test_datetimes_can_exclude_imaginary(kw):
     # Sanity check: fail unless those days contain an imaginary hour to filter out
     find_any(datetimes(**kw, allow_imaginary=True), lambda x: not datetime_exists(x))

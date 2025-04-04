@@ -1,0 +1,77 @@
+.TH HYPOTHESIS 1 "" "@VERSION@" "Python Tools"
+.SH NAME
+hypothesis \- helper tool for property-based testing
+.SH SYNOPSIS
+.SY hypothesis
+.B codemod
+.I PATH
+.YS
+.SY hypothesis
+.B write
+.RI [ OPTIONS ]
+.I FUNCTION
+.RI [ FUNCTION
+.IR \.\.\. ]
+.YS
+.SH DESCRIPTION
+.B hypothesis
+helps you write and maintain property-based tests in your Python project.
+.PP
+.B hypothesis codemod
+refactors deprecated or inefficient code, rewriting files in place.
+It has no additional options.
+.PP
+.B hypothesis write
+writes property-based tests for you. Type annotations are helpful but not
+required. The following options are recognized:
+.TP
+.B \-\-roundtrip
+write roundtrip tests for write/read or encode/decode functions.
+.IP
+Example:
+.B hypothesis write \-\-roundtrip json.dumps json.loads
+.TP
+.B \-\-equivalent
+write tests whether two functions behave identically.
+.IP
+Example:
+.B hypothesis write \-\-equivalent ast.literal_eval eval
+.TP
+.B \-\-errors\-equivalent
+like
+.BR \-\-equivalent ,
+but also allows consistent errors.
+.TP
+.B \-\-idempotent
+write tests whether a function is idempotent.
+.TP
+.B \-\-binary\-op
+write tests for associativity, commutativity and identitiy element.
+.IP
+Example:
+.B hypothesis write \-\-binary\-op operator.add
+.TP
+.BR \-\-except " " \fICLASS\fR
+dotted name of exception to ignore. can be specified multiple times.
+.TP
+.BR \-\-annotate ", " \-\-no-annotate
+force tests to be type-annotated (or not).
+.TP
+.BI \-\-style= STYLE
+write tests as
+.B pytest
+functions
+or
+.B unittest
+methods.
+.SH AUTHORS
+.B hypothesis
+has been conceived by David R. McIver and written with the help of many
+contributors.
+.PP
+This manual page has been written by
+.MT roehling@debian.org
+Timo R\[u00F6]hling
+.ME
+for Debian and may be reused without restriction.
+

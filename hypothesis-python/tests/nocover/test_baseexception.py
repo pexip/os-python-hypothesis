@@ -11,8 +11,10 @@
 import pytest
 
 from hypothesis import given
-from hypothesis.errors import Flaky
-from hypothesis.strategies import composite, integers
+from hypothesis.errors import Flaky, FlakyFailure
+from hypothesis.strategies import composite, integers, none
+
+from tests.common.utils import Why, xfail_on_crosshair
 
 
 @pytest.mark.parametrize(
@@ -36,7 +38,7 @@ def test_exception_propagates_fine_from_strategy(e):
         raise e
         # this line will not be executed, but must be here
         # to pass draw function static reference check
-        return draw(st.none())
+        return draw(none())
 
     @given(interrupt_eventually())
     def test_do_nothing(x):
@@ -46,15 +48,17 @@ def test_exception_propagates_fine_from_strategy(e):
         test_do_nothing()
 
 
+@xfail_on_crosshair(Why.other, strict=False)  # extra replay from backend switch
 @pytest.mark.parametrize("e", [KeyboardInterrupt, ValueError])
 def test_baseexception_no_rerun_no_flaky(e):
-    runs = [0]
+    runs = 0
     interrupt = 3
 
     @given(integers())
     def test_raise_baseexception(x):
-        runs[0] += 1
-        if runs[0] == interrupt:
+        nonlocal runs
+        runs += 1
+        if runs == interrupt:
             raise e
 
     if issubclass(e, (KeyboardInterrupt, SystemExit, GeneratorExit)):
@@ -62,12 +66,13 @@ def test_baseexception_no_rerun_no_flaky(e):
         with pytest.raises(e):
             test_raise_baseexception()
 
-        assert runs[0] == interrupt
+        assert runs == interrupt
     else:
-        with pytest.raises(Flaky):
+        with pytest.raises(FlakyFailure):
             test_raise_baseexception()
 
 
+@xfail_on_crosshair(Why.symbolic_outside_context, strict=False)  # KI and GE only
 @pytest.mark.parametrize(
     "e", [KeyboardInterrupt, SystemExit, GeneratorExit, ValueError]
 )
@@ -105,7 +110,7 @@ from hypothesis import given, note, strategies as st
 @st.composite
 def things(draw):
     raise {exception}
-    # this line will not be executed, but must be here 
+    # this line will not be executed, but must be here
     # to pass draw function static reference check
     return draw(st.none())
 

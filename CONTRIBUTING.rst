@@ -8,9 +8,10 @@ First off: It's great that you want to contribute to Hypothesis! Thanks!
 Just tell me how to make a pull request
 ---------------------------------------
 
-1. Make you change and ensure it has adequate tests
+1. Make your change and ensure it has adequate tests
 2. Create ``hypothesis-python/RELEASE.rst`` with ``RELEASE_TYPE: patch``
-   for small bugfixes, or ``minor`` for new features.  See recent PRs for examples.
+   for small bugfixes, or ``minor`` for new features.  See ``RELEASE-sample.rst``
+   as an example.
 3. Add yourself to the list in ``AUTHORS.rst`` and open a PR!
 
 For more detail, read on; for even more, continue to the ``guides/`` directory!
@@ -61,12 +62,12 @@ make changes and install the changed version) you can do this with:
   pytest hypothesis-python/tests/cover/
 
 You may wish to do all of this in a
-`virtualenv <https://virtualenv.pypa.io/en/latest/>`_. For example:
+`virtualenv <https://docs.python.org/3/library/venv.html>`_. For example:
 
 .. code:: bash
 
-  virtualenv venv
-  source venv/bin/activate
+  python3 -m venv .venv
+  source .venv/bin/activate
   pip install hypothesis
 
 Will create an isolated environment where you can install and try out
@@ -176,7 +177,7 @@ Some notable commands:
 ``./build.sh check-coverage`` will verify 100% code coverage by running a
 curated subset of the test suite.
 
-``./build.sh check-py37`` (etc.) will run most of the test suite against a
+``./build.sh check-py311`` (etc.) will run most of the test suite against a
 particular python version.
 
 ``./build.sh format`` will reformat your code according to the Hypothesis coding style. You should use this before each
@@ -196,22 +197,22 @@ may have to wait a while as the build downloads and installs the right version o
 Running Tests
 ~~~~~~~~~~~~~
 
-The tasks described above will run all of the tests (e.g. ``check-py37``). But
+The tasks described above will run all of the tests (e.g. ``check-py311``). But
 the ``tox`` task will give finer-grained control over the test runner. At a
 high level, the task takes the form:
 
 .. code-block::
 
-    ./build.sh tox py37-custom 3.7.13 [tox args] -- [pytest args]
+    ./build.sh tox py311-custom 3.11.3 [tox args] -- [pytest args]
 
 Namely, first provide the tox environment (see ``tox.ini``), then the python
 version to test with, then any ``tox`` or ``pytest`` args as needed. For
 example, to run all of the tests in the file
-``tests/nocover/test_conjecture_engine.py`` with python 3.8:
+``tests/nocover/test_conjecture_engine.py`` with python 3.12:
 
 .. code-block::
 
-    ./build.sh tox py38-custom 3.8.13 -- tests/nocover/test_conjecture_engine.py
+    ./build.sh tox py312-custom 3.12.7 -- tests/nocover/test_conjecture_engine.py
 
 See the ``tox`` docs and ``pytest`` docs for more information:
 * https://docs.pytest.org/en/latest/how-to/usage.html

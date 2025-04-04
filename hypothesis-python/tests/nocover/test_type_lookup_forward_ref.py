@@ -8,11 +8,11 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-from typing import Dict, ForwardRef, List, Union
+from typing import Dict as _Dict, ForwardRef, Union
 
 import pytest
 
-from hypothesis import given, strategies as st
+from hypothesis import given, settings, strategies as st
 from hypothesis.errors import ResolutionFailed
 
 from tests.common import utils
@@ -20,12 +20,14 @@ from tests.common import utils
 # Mutually-recursive types
 # See https://github.com/HypothesisWorks/hypothesis/issues/2722
 
+pytestmark = pytest.mark.skipif(settings._current_profile == "crosshair", reason="slow")
+
 
 @given(st.data())
 def test_mutually_recursive_types_with_typevar(data):
     # The previously-failing example from the issue
-    A = Dict[bool, "B"]  # noqa: F821 - an undefined name is the whole point!
-    B = Union[List[bool], A]
+    A = _Dict[bool, "B"]
+    B = Union[list[bool], A]
 
     with pytest.raises(ResolutionFailed, match=r"Could not resolve ForwardRef\('B'\)"):
         data.draw(st.from_type(A))
@@ -44,8 +46,8 @@ def test_mutually_recursive_types_with_typevar(data):
 def test_mutually_recursive_types_with_typevar_alternate(data):
     # It's not particularly clear why this version passed when the previous
     # test failed, but different behaviour means we add both to the suite.
-    C = Union[List[bool], "D"]  # noqa: F821 - an undefined name is the whole point!
-    D = Dict[bool, C]
+    C = Union[list[bool], "D"]
+    D = dict[bool, C]
 
     with pytest.raises(ResolutionFailed, match=r"Could not resolve ForwardRef\('D'\)"):
         data.draw(st.from_type(C))

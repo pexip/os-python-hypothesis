@@ -9,12 +9,6 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 """
-.. _hypothesis-cli:
-
-----------------
-hypothesis[cli]
-----------------
-
 ::
 
     $ hypothesis --help
@@ -30,7 +24,7 @@ hypothesis[cli]
       write    `hypothesis write` writes property-based tests for you!
 
 This module requires the :pypi:`click` package, and provides Hypothesis' command-line
-interface, for e.g. :doc:`'ghostwriting' tests <ghostwriter>` via the terminal.
+interface, for e.g. :ref:`'ghostwriting' tests <ghostwriter>` via the terminal.
 It's also where `HypoFuzz <https://hypofuzz.com/>`__ adds the :command:`hypothesis fuzz`
 command (`learn more about that here <https://hypofuzz.com/docs/quickstart.html>`__).
 """
@@ -43,6 +37,7 @@ import types
 from difflib import get_close_matches
 from functools import partial
 from multiprocessing import Pool
+from pathlib import Path
 
 try:
     import pytest
@@ -53,7 +48,7 @@ MESSAGE = """
 The Hypothesis command-line interface requires the `{}` package,
 which you do not have installed.  Run:
 
-    python -m pip install --upgrade hypothesis[cli]
+    python -m pip install --upgrade 'hypothesis[cli]'
 
 and try again.
 """
@@ -131,7 +126,7 @@ else:
                     # Likely attempted to pass a local file (Eg., "myscript.py") instead of a module name
                     raise click.UsageError(
                         "Remember that the ghostwriter should be passed the name of a module, not a file."
-                        + f"\n\tTry: hypothesis write {s[:-3]}"
+                        f"\n\tTry: hypothesis write {s[:-3]}"
                     ) from None
                 raise click.UsageError(
                     f"Found the {modulename!r} module, but it doesn't have a "
@@ -161,15 +156,28 @@ else:
 
     def _refactor(func, fname):
         try:
-            with open(fname) as f:
-                oldcode = f.read()
+            oldcode = Path(fname).read_text(encoding="utf-8")
         except (OSError, UnicodeError) as err:
             # Permissions or encoding issue, or file deleted, etc.
             return f"skipping {fname!r} due to {err}"
-        newcode = func(oldcode)
+
+        if "hypothesis" not in oldcode:
+            return  # This is a fast way to avoid running slow no-op codemods
+
+        try:
+            newcode = func(oldcode)
+        except Exception as err:
+            from libcst import ParserSyntaxError
+
+            if isinstance(err, ParserSyntaxError):
+                from hypothesis.extra._patching import indent
+
+                msg = indent(str(err).replace("\n\n", "\n"), "    ").strip()
+                return f"skipping {fname!r} due to {msg}"
+            raise
+
         if newcode != oldcode:
-            with open(fname, mode="w") as f:
-                f.write(newcode)
+            Path(fname).write_text(newcode, encoding="utf-8")
 
     @main.command()  # type: ignore  # Click adds the .command attribute
     @click.argument("path", type=str, required=True, nargs=-1)
@@ -275,9 +283,7 @@ else:
         help="force ghostwritten tests to be type-annotated (or not).  "
         "By default, match the code to test.",
     )
-    def write(
-        func, writer, except_, style, annotate
-    ):  # noqa: D301  # \b disables autowrap
+    def write(func, writer, except_, style, annotate):  # \b disables autowrap
         """`hypothesis write` writes property-based tests for you!
 
         Type annotations are helpful but not required for our advanced introspection

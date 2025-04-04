@@ -1,0 +1,33 @@
+From: =?utf-8?q?Timo_R=C3=B6hling?= <roehling@debian.org>
+Date: Tue, 29 Aug 2023 10:58:19 +0200
+Subject: Avoid hard dependency on libcst
+
+Forwarded: not-needed
+---
+ hypothesis-python/docs/conf.py | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/hypothesis-python/docs/conf.py b/hypothesis-python/docs/conf.py
+index 6c42460..4e97261 100644
+--- a/hypothesis-python/docs/conf.py
++++ b/hypothesis-python/docs/conf.py
+@@ -85,12 +85,15 @@ def setup(app):
+         app.tags.add("has_release_file")
+ 
+     # Workaround for partial-initialization problem when autodoc imports libcst
+-    import libcst
++    try:
++        import libcst
+ 
+-    import hypothesis.extra.codemods
++        import hypothesis.extra.codemods
+ 
+-    assert libcst
+-    assert hypothesis.extra.codemods
++        assert libcst
++        assert hypothesis.extra.codemods
++    except ModuleNotFoundError:
++        pass
+ 
+     # patch in mock array_api namespace so we can autodoc it
+     from hypothesis.extra.array_api import (

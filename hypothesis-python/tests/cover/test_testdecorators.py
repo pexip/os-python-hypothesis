@@ -12,7 +12,17 @@ import functools
 import threading
 from collections import namedtuple
 
-from hypothesis import HealthCheck, Verbosity, assume, given, note, reporting, settings
+from hypothesis import (
+    HealthCheck,
+    Verbosity,
+    assume,
+    given,
+    note,
+    reporting,
+    settings,
+    strategies as st,
+)
+from hypothesis.errors import Unsatisfiable
 from hypothesis.strategies import (
     binary,
     booleans,
@@ -30,12 +40,15 @@ from hypothesis.strategies import (
 )
 
 from tests.common.utils import (
+    Why,
     assert_falsifying_output,
     capture_out,
     fails,
     fails_with,
     no_shrink,
     raises,
+    skipif_emscripten,
+    xfail_on_crosshair,
 )
 
 # This particular test file is run under both pytest and nose, so it can't
@@ -114,7 +127,7 @@ class TestCases:
         assert isinstance(self, TestCases)
 
     @given(x=integers())
-    def test_abs_non_negative_varargs_kwargs_only(*args, **kw):  # noqa: B902
+    def test_abs_non_negative_varargs_kwargs_only(*args, **kw):
         assert abs(kw["x"]) >= 0
         assert isinstance(args[0], TestCases)
 
@@ -136,6 +149,7 @@ def test_can_be_given_keyword_args(x, name):
     assert len(name) < x
 
 
+@xfail_on_crosshair(Why.undiscovered)
 @fails
 @given(one_of(floats(), booleans()), one_of(floats(), booleans()))
 def test_one_of_produces_different_values(x, y):
@@ -158,13 +172,14 @@ def test_integers_from_are_from(x):
 
 
 def test_does_not_catch_interrupt_during_falsify():
-    calls = [0]
+    called = False
 
     @given(integers())
     def flaky_base_exception(x):
-        if not calls[0]:
-            calls[0] = 1
-            raise KeyboardInterrupt()
+        nonlocal called
+        if not called:
+            called = True
+            raise KeyboardInterrupt
 
     with raises(KeyboardInterrupt):
         flaky_base_exception()
@@ -182,6 +197,7 @@ def test_removing_an_element_from_a_unique_list(xs, y):
     assert y not in xs
 
 
+@xfail_on_crosshair(Why.undiscovered)
 @fails
 @given(lists(integers(), min_size=2), data())
 def test_removing_an_element_from_a_non_unique_list(xs, data):
@@ -205,6 +221,7 @@ def test_can_mix_sampling_with_generating(x, y):
     assert type(x) == type(y)
 
 
+@xfail_on_crosshair(Why.undiscovered)
 @fails
 @given(frozensets(integers()))
 def test_can_find_large_sum_frozenset(xs):
@@ -303,6 +320,7 @@ def test_has_ascii(x):
     assert any(c in ascii_characters for c in x)
 
 
+@xfail_on_crosshair(Why.symbolic_outside_context, strict=False)
 def test_can_derandomize():
     values = []
 
@@ -331,12 +349,13 @@ def test_can_run_without_database():
         test_blah()
 
 
+@skipif_emscripten
 def test_can_run_with_database_in_thread():
     results = []
 
     @given(integers())
     def test_blah(x):
-        raise ValueError()
+        raise ValueError
 
     def run_test():
         try:
@@ -371,7 +390,7 @@ def test_named_tuples_are_of_right_type(litter):
 
 @fails_with(AttributeError)
 @given(integers().map(lambda x: x.nope))
-@settings(suppress_health_check=HealthCheck.all())
+@settings(suppress_health_check=list(HealthCheck))
 def test_fails_in_reify(x):
     pass
 
@@ -391,6 +410,7 @@ def test_mixed_text(x):
     assert set(x).issubset(set("abcdefg"))
 
 
+@xfail_on_crosshair(Why.other, strict=False)  # runs ~five failing examples
 def test_when_set_to_no_simplifies_runs_failing_example_twice():
     failing = []
 
@@ -464,7 +484,7 @@ def test_prints_notes_once_on_failure():
     def test(xs):
         note("Hi there")
         if sum(xs) <= 100:
-            raise ValueError()
+            raise ValueError
 
     with raises(ValueError) as err:
         test()
@@ -476,7 +496,47 @@ def test_empty_lists(xs):
     assert xs == []
 
 
+@xfail_on_crosshair(Why.other, strict=False)
 def test_given_usable_inline_on_lambdas():
     xs = []
     given(booleans())(lambda x: xs.append(x))()
-    assert len(xs) == 2 and set(xs) == {False, True}
+    assert len(xs) == 2
+    assert set(xs) == {False, True}
+
+
+def test_notes_high_filter_rates_in_unsatisfiable_error():
+    @given(st.integers())
+    @settings(suppress_health_check=[HealthCheck.filter_too_much])
+    def f(v):
+        assume(False)
+
+    with raises(
+        Unsatisfiable,
+        match=(
+            r"Unable to satisfy assumptions of f\. 1000 of 1000 examples "
+            r"failed a \.filter\(\) or assume\(\)"
+        ),
+    ):
+        f()
+
+
+def test_notes_high_overrun_rates_in_unsatisfiable_error():
+    @given(st.binary(min_size=9000))
+    @settings(
+        suppress_health_check=[
+            HealthCheck.data_too_large,
+            HealthCheck.too_slow,
+            HealthCheck.large_base_example,
+        ]
+    )
+    def f(v):
+        pass
+
+    with raises(
+        Unsatisfiable,
+        match=(
+            r"1000 of 1000 examples were too large to finish generating; "
+            r"try reducing the typical size of your inputs\?"
+        ),
+    ):
+        f()

@@ -1,0 +1,2 @@
+# False positive; not documentation but data for generating test examples
+package-contains-documentation-outside-usr-share-doc [usr/lib/python3/dist-packages/hypothesis/vendor/tlds-alpha-by-domain.txt]

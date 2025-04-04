@@ -17,7 +17,7 @@ from hypothesis.errors import InvalidArgument, Unsatisfiable
 
 
 def test_contains_the_test_function_name_in_the_exception_string():
-    look_for_one = settings(max_examples=1, suppress_health_check=HealthCheck.all())
+    look_for_one = settings(max_examples=1, suppress_health_check=list(HealthCheck))
 
     @given(st.integers())
     @look_for_one
@@ -50,13 +50,12 @@ def test_signature_mismatch_error_message():
     def bad_test():
         pass
 
-    try:
+    with pytest.raises(
+        InvalidArgument,
+        match=r"bad_test\(\) got an unexpected keyword argument 'x', "
+        r"from `x=integers\(\)` in @given",
+    ):
         bad_test()
-    except InvalidArgument as e:
-        assert (
-            str(e) == "bad_test() got an unexpected keyword argument 'x', "
-            "from `x=integers()` in @given"
-        )
 
 
 @given(data=st.data(), keys=st.lists(st.integers(), unique=True))

@@ -16,7 +16,7 @@ from hypothesis.extra import codemods
 def test_refactor_function_is_idempotent():
     before = (
         "from hypothesis.strategies import complex_numbers\n\n"
-        + "complex_numbers(None)\n"
+        "complex_numbers(None)\n"
     )
     after = codemods.refactor(before)
     assert before.replace("None", "min_magnitude=0") == after
@@ -131,3 +131,39 @@ class TestFixPositionalKeywonlyArgs(CodemodTest):
             st.sets(st.integers(), 0, 1, True)
         """
         self.assertCodemod(before=before, after=before)
+
+
+class TestHealthCheckAll(CodemodTest):
+    TRANSFORM = codemods.HypothesisFixHealthCheckAll
+
+    def test_noop_other_attributes(self):
+        # Test that calls to other attributes of HealthCheck are not modified
+        before = "result = HealthCheck.data_too_large"
+        self.assertCodemod(before=before, after=before)
+
+    def test_substitution(self) -> None:
+        # Test that HealthCheck.all() is replaced with list(HealthCheck)
+        before = "result = HealthCheck.all()"
+        after = "result = list(HealthCheck)"
+        # self.assertEqual(run_codemod(input_code), expected_code)
+        self.assertCodemod(before=before, after=after)
+
+
+class TestFixCharactersArguments(CodemodTest):
+    TRANSFORM = codemods.HypothesisFixCharactersArguments
+
+    def test_substitution(self) -> None:
+        for in_, out in codemods.HypothesisFixCharactersArguments._replacements.items():
+            before = f"""
+                import hypothesis.strategies as st
+                st.characters({in_}=...)
+            """
+            self.assertCodemod(before=before, after=before.replace(in_, out))
+
+    def test_remove_redundant_exclude_categories(self) -> None:
+        args = "blacklist_categories=OUT, whitelist_categories=IN"
+        before = f"""
+                import hypothesis.strategies as st
+                st.characters({args})
+            """
+        self.assertCodemod(before=before, after=before.replace(args, "categories=IN"))

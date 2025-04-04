@@ -1,0 +1,25 @@
+From: =?utf-8?q?Timo_R=C3=B6hling?= <roehling@debian.org>
+Date: Thu, 2 May 2024 11:11:06 +0200
+Subject: Do not enforce minimum Sphinx version
+
+---
+ hypothesis-python/docs/conf.py | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/hypothesis-python/docs/conf.py b/hypothesis-python/docs/conf.py
+index 4e97261..4ed1edc 100644
+--- a/hypothesis-python/docs/conf.py
++++ b/hypothesis-python/docs/conf.py
+@@ -18,9 +18,9 @@ root = Path(__file__).parent.parent
+ sys.path.append(str(root / "src"))
+ sys.path.append(str(Path(__file__).parent / "_ext"))
+ 
+-needs_sphinx = re.search(
+-    r"sphinx==([0-9\.]+)", root.joinpath("../requirements/tools.txt").read_text()
+-).group(1)
++#needs_sphinx = re.search(
++#    r"sphinx==([0-9\.]+)", root.joinpath("../requirements/tools.txt").read_text()
++#).group(1)
+ default_role = "py:obj"
+ nitpicky = True
+ 

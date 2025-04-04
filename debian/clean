@@ -1,0 +1,3 @@
+.pytest_cache/
+debian/hypothesis.1
+hypothesis-python/src/hypothesis.egg-info/

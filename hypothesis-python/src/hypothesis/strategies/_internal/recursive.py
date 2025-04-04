@@ -11,8 +11,9 @@
 import threading
 from contextlib import contextmanager
 
-from hypothesis.internal.lazyformat import lazyformat
+from hypothesis.errors import InvalidArgument
 from hypothesis.internal.reflection import get_pretty_function_description
+from hypothesis.internal.validation import check_type
 from hypothesis.strategies._internal.strategies import (
     OneOfStrategy,
     SearchStrategy,
@@ -46,16 +47,16 @@ class LimitedStrategy(SearchStrategy):
     def currently_capped(self, value):
         self._threadlocal.currently_capped = value
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"LimitedStrategy({self.base_strategy!r})"
 
-    def do_validate(self):
+    def do_validate(self) -> None:
         self.base_strategy.validate()
 
     def do_draw(self, data):
         assert self.currently_capped
         if self.marker <= 0:
-            raise LimitReached()
+            raise LimitReached
         self.marker -= 1
         return data.draw(self.base_strategy)
 
@@ -82,7 +83,7 @@ class RecursiveStrategy(SearchStrategy):
             strategies.append(extend(OneOfStrategy(tuple(strategies))))
         self.strategy = OneOfStrategy(strategies)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         if not hasattr(self, "_cached_repr"):
             self._cached_repr = "recursive(%r, %s, max_leaves=%d)" % (
                 self.base,
@@ -91,12 +92,17 @@ class RecursiveStrategy(SearchStrategy):
             )
         return self._cached_repr
 
-    def do_validate(self):
+    def do_validate(self) -> None:
         check_strategy(self.base, "base")
         extended = self.extend(self.limited_base)
         check_strategy(extended, f"extend({self.limited_base!r})")
         self.limited_base.validate()
         extended.validate()
+        check_type(int, self.max_leaves, "max_leaves")
+        if self.max_leaves <= 0:
+            raise InvalidArgument(
+                f"max_leaves={self.max_leaves!r} must be greater than zero"
+            )
 
     def do_draw(self, data):
         count = 0
@@ -105,13 +111,7 @@ class RecursiveStrategy(SearchStrategy):
                 with self.limited_base.capped(self.max_leaves):
                     return data.draw(self.strategy)
             except LimitReached:
-                # Workaround for possible coverage bug - this branch is definitely
-                # covered but for some reason is showing up as not covered.
-                if count == 0:  # pragma: no branch
-                    data.note_event(
-                        lazyformat(
-                            "Draw for %r exceeded max_leaves and had to be retried",
-                            self,
-                        )
-                    )
+                if count == 0:
+                    msg = f"Draw for {self!r} exceeded max_leaves and had to be retried"
+                    data.events[msg] = ""
                 count += 1
