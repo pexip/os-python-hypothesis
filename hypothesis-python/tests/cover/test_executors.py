@@ -14,7 +14,6 @@ from unittest import TestCase
 import pytest
 
 from hypothesis import example, given
-from hypothesis.executors import ConjectureRunner
 from hypothesis.strategies import booleans, integers
 
 
@@ -28,7 +27,7 @@ def test_must_use_result_of_test():
         @given(booleans())
         def boom(self, b):
             def f():
-                raise ValueError()
+                raise ValueError
 
             return f
 
@@ -56,11 +55,11 @@ class Valueless:
     @given(integers())
     @example(1)
     def test_no_boom_on_example(self, x):
-        raise ValueError()
+        raise ValueError
 
     @given(integers())
     def test_no_boom(self, x):
-        raise ValueError()
+        raise ValueError
 
     @given(integers())
     def test_boom(self, x):
@@ -78,9 +77,3 @@ def test_no_boom():
 
 def test_no_boom_on_example():
     Valueless().test_no_boom_on_example()
-
-
-class TestNormal(ConjectureRunner, TestCase):
-    @given(booleans())
-    def test_stuff(self, b):
-        pass

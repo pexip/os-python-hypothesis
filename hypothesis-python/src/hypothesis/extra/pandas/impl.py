@@ -9,9 +9,10 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 from collections import OrderedDict, abc
+from collections.abc import Sequence
 from copy import copy
 from datetime import datetime, timedelta
-from typing import Any, List, Optional, Sequence, Set, Union
+from typing import Any, Generic, Optional, Union
 
 import attr
 import numpy as np
@@ -35,13 +36,9 @@ from hypothesis.strategies._internal.strategies import Ex, check_strategy
 from hypothesis.strategies._internal.utils import cacheable, defines_strategy
 
 try:
-    from pandas.api.types import is_categorical_dtype
+    from pandas.core.arrays.integer import IntegerDtype
 except ImportError:
-
-    def is_categorical_dtype(dt):
-        if isinstance(dt, np.dtype):
-            return False
-        return dt == "category"
+    IntegerDtype = ()
 
 
 def dtype_for_elements_strategy(s):
@@ -73,43 +70,68 @@ def elements_and_dtype(elements, dtype, source=None):
                     f"At least one of {prefix}elements or {prefix}dtype must be provided."
                 )
 
-    with check("is_categorical_dtype"):
-        if is_categorical_dtype(dtype):
+    with check("isinstance(dtype, CategoricalDtype)"):
+        if pandas.api.types.CategoricalDtype.is_dtype(dtype):
             raise InvalidArgument(
                 f"{prefix}dtype is categorical, which is currently unsupported"
             )
 
+    if isinstance(dtype, type) and issubclass(dtype, IntegerDtype):
+        raise InvalidArgument(
+            f"Passed {dtype=} is a dtype class, please pass in an instance of this class."
+            "Otherwise it would be treated as dtype=object"
+        )
+
     if isinstance(dtype, type) and np.dtype(dtype).kind == "O" and dtype is not object:
+        err_msg = f"Passed {dtype=} is not a valid Pandas dtype."
+        if issubclass(dtype, datetime):
+            err_msg += ' To generate valid datetimes, pass `dtype="datetime64[ns]"`'
+            raise InvalidArgument(err_msg)
+        elif issubclass(dtype, timedelta):
+            err_msg += ' To generate valid timedeltas, pass `dtype="timedelta64[ns]"`'
+            raise InvalidArgument(err_msg)
         note_deprecation(
-            f"Passed dtype={dtype!r} is not a valid Pandas dtype.  We'll treat it as "
+            f"{err_msg}  We'll treat it as "
             "dtype=object for now, but this will be an error in a future version.",
             since="2021-12-31",
             has_codemod=False,
+            stacklevel=1,
         )
 
     if isinstance(dtype, st.SearchStrategy):
         raise InvalidArgument(
-            f"Passed dtype={dtype!r} is a strategy, but we require a concrete dtype "
+            f"Passed {dtype=} is a strategy, but we require a concrete dtype "
             "here.  See https://stackoverflow.com/q/74355937 for workaround patterns."
         )
-    dtype = try_convert(np.dtype, dtype, "dtype")
+
+    _get_subclasses = getattr(IntegerDtype, "__subclasses__", list)
+    dtype = {t.name: t() for t in _get_subclasses()}.get(dtype, dtype)
+
+    if isinstance(dtype, IntegerDtype):
+        is_na_dtype = True
+        dtype = np.dtype(dtype.name.lower())
+    elif dtype is not None:
+        is_na_dtype = False
+        dtype = try_convert(np.dtype, dtype, "dtype")
+    else:
+        is_na_dtype = False
 
     if elements is None:
         elements = npst.from_dtype(dtype)
+        if is_na_dtype:
+            elements = st.none() | elements
     elif dtype is not None:
 
         def convert_element(value):
+            if is_na_dtype and value is None:
+                return None
             name = f"draw({prefix}elements)"
             try:
                 return np.array([value], dtype=dtype)[0]
-            except TypeError:
+            except (TypeError, ValueError, OverflowError):
                 raise InvalidArgument(
                     "Cannot convert %s=%r of type %s to dtype %s"
                     % (name, value, type(value).__name__, dtype.str)
-                ) from None
-            except ValueError:
-                raise InvalidArgument(
-                    f"Cannot convert {name}={value!r} to type {dtype.str}"
                 ) from None
 
         elements = elements.map(convert_element)
@@ -282,8 +304,16 @@ def series(
     else:
         check_strategy(index, "index")
 
-    elements, dtype = elements_and_dtype(elements, dtype)
+    elements, np_dtype = elements_and_dtype(elements, dtype)
     index_strategy = index
+
+    # if it is converted to an object, use object for series type
+    if (
+        np_dtype is not None
+        and np_dtype.kind == "O"
+        and not isinstance(dtype, IntegerDtype)
+    ):
+        dtype = np_dtype
 
     @st.composite
     def result(draw):
@@ -293,13 +323,13 @@ def series(
             if dtype is not None:
                 result_data = draw(
                     npst.arrays(
-                        dtype=dtype,
+                        dtype=object,
                         elements=elements,
                         shape=len(index),
                         fill=fill,
                         unique=unique,
                     )
-                )
+                ).tolist()
             else:
                 result_data = list(
                     draw(
@@ -310,17 +340,18 @@ def series(
                             fill=fill,
                             unique=unique,
                         )
-                    )
+                    ).tolist()
                 )
-
             return pandas.Series(result_data, index=index, dtype=dtype, name=draw(name))
         else:
             return pandas.Series(
                 (),
                 index=index,
-                dtype=dtype
-                if dtype is not None
-                else draw(dtype_for_elements_strategy(elements)),
+                dtype=(
+                    dtype
+                    if dtype is not None
+                    else draw(dtype_for_elements_strategy(elements))
+                ),
                 name=draw(name),
             )
 
@@ -328,7 +359,7 @@ def series(
 
 
 @attr.s(slots=True)
-class column:
+class column(Generic[Ex]):
     """Data object for describing a column in a DataFrame.
 
     Arguments:
@@ -345,11 +376,11 @@ class column:
     * unique: If all values in this column should be distinct.
     """
 
-    name = attr.ib(default=None)
-    elements = attr.ib(default=None)
-    dtype = attr.ib(default=None, repr=get_pretty_function_description)
-    fill = attr.ib(default=None)
-    unique = attr.ib(default=False)
+    name: Optional[Union[str, int]] = attr.ib(default=None)
+    elements: Optional[st.SearchStrategy[Ex]] = attr.ib(default=None)
+    dtype: Any = attr.ib(default=None, repr=get_pretty_function_description)
+    fill: Optional[st.SearchStrategy[Ex]] = attr.ib(default=None)
+    unique: bool = attr.ib(default=False)
 
 
 def columns(
@@ -359,7 +390,7 @@ def columns(
     elements: Optional[st.SearchStrategy[Ex]] = None,
     fill: Optional[st.SearchStrategy[Ex]] = None,
     unique: bool = False,
-) -> List[column]:
+) -> list[column[Ex]]:
     """A convenience function for producing a list of :class:`column` objects
     of the same general shape.
 
@@ -370,7 +401,7 @@ def columns(
     create the columns.
     """
     if isinstance(names_or_number, (int, float)):
-        names: List[Union[int, str, None]] = [None] * names_or_number
+        names: list[Union[int, str, None]] = [None] * names_or_number
     else:
         names = list(names_or_number)
     return [
@@ -504,7 +535,6 @@ def data_frames(
             def rows_only(draw):
                 index = draw(index_strategy)
 
-                @check_function
                 def row():
                     result = draw(rows)
                     check_type(abc.Iterable, result, "draw(row)")
@@ -525,7 +555,7 @@ def data_frames(
     cols = try_convert(tuple, columns, "columns")
 
     rewritten_columns = []
-    column_names: Set[str] = set()
+    column_names: set[str] = set()
 
     for i, c in enumerate(cols):
         check_type(column, c, f"columns[{i}]")
@@ -549,7 +579,7 @@ def data_frames(
 
         column_names.add(c.name)
 
-        c.elements, c.dtype = elements_and_dtype(c.elements, c.dtype, label)
+        c.elements, _ = elements_and_dtype(c.elements, c.dtype, label)
 
         if c.dtype is None and rows is not None:
             raise InvalidArgument(
@@ -589,7 +619,9 @@ def data_frames(
             if columns_without_fill:
                 for c in columns_without_fill:
                     data[c.name] = pandas.Series(
-                        np.zeros(shape=len(index), dtype=c.dtype), index=index
+                        np.zeros(shape=len(index), dtype=object),
+                        index=index,
+                        dtype=c.dtype,
                     )
                 seen = {c.name: set() for c in columns_without_fill if c.unique}
 
@@ -614,7 +646,7 @@ def data_frames(
                                 value, (float, int, str, bool, datetime, timedelta)
                             ):
                                 raise ValueError(
-                                    f"Failed to add value={value!r} to column "
+                                    f"Failed to add {value=} to column "
                                     f"{c.name} with dtype=None.  Maybe passing "
                                     "dtype=object would help?"
                                 ) from err

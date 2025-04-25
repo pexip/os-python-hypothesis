@@ -21,21 +21,20 @@ from hypothesistooling import releasemanagement as rm
 
 PACKAGE_NAME = "hypothesis-python"
 
-HYPOTHESIS_PYTHON = os.path.join(tools.ROOT, PACKAGE_NAME)
+HYPOTHESIS_PYTHON = tools.ROOT / PACKAGE_NAME
 PYTHON_TAG_PREFIX = "hypothesis-python-"
 
 
 BASE_DIR = HYPOTHESIS_PYTHON
 
-PYTHON_SRC = os.path.join(HYPOTHESIS_PYTHON, "src")
-PYTHON_TESTS = os.path.join(HYPOTHESIS_PYTHON, "tests")
-DOMAINS_LIST = os.path.join(
-    PYTHON_SRC, "hypothesis", "vendor", "tlds-alpha-by-domain.txt"
-)
+PYTHON_SRC = HYPOTHESIS_PYTHON / "src"
+PYTHON_TESTS = HYPOTHESIS_PYTHON / "tests"
+DOMAINS_LIST = PYTHON_SRC / "hypothesis" / "vendor" / "tlds-alpha-by-domain.txt"
 
-RELEASE_FILE = os.path.join(HYPOTHESIS_PYTHON, "RELEASE.rst")
+RELEASE_FILE = HYPOTHESIS_PYTHON / "RELEASE.rst"
+RELEASE_SAMPLE_FILE = HYPOTHESIS_PYTHON / "RELEASE-sample.rst"
 
-assert os.path.exists(PYTHON_SRC)
+assert PYTHON_SRC.exists()
 
 
 __version__ = None
@@ -43,7 +42,7 @@ __version_info__ = None
 
 VERSION_FILE = os.path.join(PYTHON_SRC, "hypothesis/version.py")
 
-with open(VERSION_FILE) as o:
+with open(VERSION_FILE, encoding="utf-8") as o:
     exec(o.read())
 
 assert __version__ is not None
@@ -51,7 +50,11 @@ assert __version_info__ is not None
 
 
 def has_release():
-    return os.path.exists(RELEASE_FILE)
+    return RELEASE_FILE.exists()
+
+
+def has_release_sample():
+    return RELEASE_SAMPLE_FILE.exists()
 
 
 def parse_release_file():
@@ -62,20 +65,19 @@ def has_source_changes():
     return tools.has_changes([PYTHON_SRC])
 
 
-def build_docs(builder="html"):
+def build_docs(*, builder="html", only=()):
     # See https://www.sphinx-doc.org/en/stable/man/sphinx-build.html
     # (unfortunately most options only have the short flag version)
     tools.scripts.pip_tool(
         "sphinx-build",
-        "-n",
-        "-W",
-        "--keep-going",
-        "-T",
-        "-E",
-        "-b",
+        "--fail-on-warning",
+        "--show-traceback",
+        "--fresh-env",
+        "--builder",
         builder,
         "docs",
         "docs/_build/" + builder,
+        *only,
         cwd=HYPOTHESIS_PYTHON,
     )
 
@@ -97,9 +99,12 @@ def update_changelog_and_version():
             assert CHANGELOG_BORDER.match(lines[i + 2]), repr(lines[i + 2])
             assert CHANGELOG_HEADER.match(lines[i + 3]), repr(lines[i + 3])
             assert CHANGELOG_BORDER.match(lines[i + 4]), repr(lines[i + 4])
+            assert lines[i + 3].startswith(
+                __version__
+            ), f"{__version__=}   {lines[i + 3]=}"
             beginning = "\n".join(lines[:i])
             rest = "\n".join(lines[i:])
-            assert "\n".join((beginning, rest)) == contents
+            assert f"{beginning}\n{rest}" == contents
             break
 
     release_type, release_contents = parse_release_file()
@@ -119,7 +124,7 @@ def update_changelog_and_version():
 
     rm.replace_assignment(VERSION_FILE, "__version_info__", repr(new_version_info))
 
-    heading_for_new_version = " - ".join((new_version_string, rm.release_date_string()))
+    heading_for_new_version = f"{new_version_string} - {rm.release_date_string()}"
     border_for_new_version = "-" * len(heading_for_new_version)
 
     new_changelog_parts = [
@@ -136,8 +141,7 @@ def update_changelog_and_version():
         rest,
     ]
 
-    with open(CHANGELOG_FILE, "w") as o:
-        o.write("\n".join(new_changelog_parts))
+    CHANGELOG_FILE.write_text("\n".join(new_changelog_parts), encoding="utf-8")
 
     # Replace the `since="RELEASEDAY"` argument to `note_deprecation`
     # with today's date, to record it for future reference.
@@ -145,20 +149,19 @@ def update_changelog_and_version():
     after = before.replace("RELEASEDAY", rm.release_date_string())
     for root, _, files in os.walk(PYTHON_SRC):
         for fname in (os.path.join(root, f) for f in files if f.endswith(".py")):
-            with open(fname) as f:
+            with open(fname, encoding="utf-8") as f:
                 contents = f.read()
             if before in contents:
-                with open(fname, "w") as f:
+                with open(fname, "w", encoding="utf-8") as f:
                     f.write(contents.replace(before, after))
 
 
-CHANGELOG_FILE = os.path.join(HYPOTHESIS_PYTHON, "docs", "changes.rst")
-DIST = os.path.join(HYPOTHESIS_PYTHON, "dist")
+CHANGELOG_FILE = HYPOTHESIS_PYTHON / "docs" / "changes.rst"
+DIST = HYPOTHESIS_PYTHON / "dist"
 
 
 def changelog():
-    with open(CHANGELOG_FILE) as i:
-        return i.read()
+    return CHANGELOG_FILE.read_text(encoding="utf-8")
 
 
 def build_distribution():
@@ -186,9 +189,9 @@ def upload_distribution():
 
     # Construct plain-text + markdown version of this changelog entry,
     # with link to canonical source.
-    build_docs(builder="text")
+    build_docs(builder="text", only=["docs/changes.rst"])
     textfile = os.path.join(HYPOTHESIS_PYTHON, "docs", "_build", "text", "changes.txt")
-    with open(textfile) as f:
+    with open(textfile, encoding="utf-8") as f:
         lines = f.readlines()
     entries = [i for i, l in enumerate(lines) if CHANGELOG_HEADER.match(l)]
     anchor = current_version().replace(".", "-")
@@ -200,16 +203,28 @@ def upload_distribution():
 
     # Create a GitHub release, to trigger Zenodo DOI minting.  See
     # https://developer.github.com/v3/repos/releases/#create-a-release
-    requests.post(
+    resp = requests.post(
         "https://api.github.com/repos/HypothesisWorks/hypothesis/releases",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
         json={
             "tag_name": tag_name(),
             "name": "Hypothesis for Python - version " + current_version(),
             "body": changelog_body,
         },
         timeout=120,  # seconds
-        auth=("Zac-HD", os.environ["GH_TOKEN"]),
-    ).raise_for_status()
+    )
+
+    # TODO: work out why this is 404'ing despite success (?!?) and fix it
+    try:
+        resp.raise_for_status()
+    except Exception:
+        import traceback
+
+        traceback.print_exc()
 
 
 def current_version():
@@ -221,7 +236,7 @@ def latest_version():
 
     for t in tools.tags():
         if t.startswith(PYTHON_TAG_PREFIX):
-            t = t[len(PYTHON_TAG_PREFIX) :]
+            t = t.removeprefix(PYTHON_TAG_PREFIX)
         else:
             continue
         assert t == t.strip()
@@ -239,7 +254,7 @@ def tag_name():
     return PYTHON_TAG_PREFIX + __version__
 
 
-def get_autoupdate_message(domainlist_changed: bool) -> str:
+def get_autoupdate_message(domainlist_changed):
     if domainlist_changed:
         return (
             "This patch updates our vendored `list of top-level domains "

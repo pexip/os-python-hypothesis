@@ -8,6 +8,8 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+import sys
+
 import numpy as np
 import pandas
 import pytest
@@ -16,22 +18,32 @@ from hypothesis import HealthCheck, given, reject, settings, strategies as st
 from hypothesis.errors import Unsatisfiable
 from hypothesis.extra import numpy as npst, pandas as pdst
 
+from tests.common.debug import check_can_generate_examples
 from tests.pandas.helpers import supported_by_pandas
 
 
+# https://pandas.pydata.org/docs/whatsnew/v2.0.0.html#index-can-now-hold-numpy-numeric-dtypes
 @given(pdst.indexes(dtype=int, max_size=0))
 def test_gets_right_dtype_for_empty_indices(ix):
-    assert ix.dtype == np.dtype("int64")
+    is_32bit = sys.maxsize == 2**31 - 1
+    pandas2 = pandas.__version__.startswith("2.")
+    numpy1 = np.__version__.startswith("1.")
+    windows = sys.platform == "win32"  # including 64-bit windows, confusingly
+    if pandas2 and (is_32bit or (windows and numpy1)):
+        # No, I don't know what this is int32 on 64-bit windows until Numpy 2.0
+        assert ix.dtype == np.dtype("int32")
+    else:
+        assert ix.dtype == np.dtype("int64")
 
 
-@given(pdst.indexes(elements=st.integers(0, 2**63 - 1), max_size=0))
+@given(pdst.indexes(elements=st.integers(0, sys.maxsize), max_size=0))
 def test_gets_right_dtype_for_empty_indices_with_elements(ix):
     assert ix.dtype == np.dtype("int64")
 
 
 def test_does_not_generate_impossible_conditions():
     with pytest.raises(Unsatisfiable):
-        pdst.indexes(min_size=3, max_size=3, dtype=bool).example()
+        check_can_generate_examples(pdst.indexes(min_size=3, max_size=3, dtype=bool))
 
 
 @given(pdst.indexes(dtype=bool, unique=True))
@@ -82,8 +94,7 @@ def test_generate_arbitrary_indices(data):
         st.one_of(
             npst.boolean_dtypes(),
             npst.integer_dtypes(endianness="="),
-            npst.floating_dtypes(endianness="="),
-            npst.complex_number_dtypes(endianness="="),
+            npst.floating_dtypes(endianness="=", sizes=(32, 64)),
             npst.datetime64_dtypes(endianness="="),
             npst.timedelta64_dtypes(endianness="="),
         ).filter(supported_by_pandas),

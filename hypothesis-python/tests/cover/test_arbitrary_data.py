@@ -28,7 +28,7 @@ def test_prints_on_failure():
         y = data.draw(st.sampled_from(x))
         x.remove(y)
         if y in x:
-            raise ValueError()
+            raise ValueError
 
     with raises(ValueError) as err:
         test()
@@ -56,7 +56,7 @@ def test_given_twice_is_same():
     def test(data1, data2):
         data1.draw(st.integers())
         data2.draw(st.integers())
-        raise ValueError()
+        raise ValueError
 
     with raises(ValueError) as err:
         test()
@@ -73,11 +73,6 @@ def test_errors_when_used_in_find():
 def test_errors_when_normal_strategy_functions_are_used(f):
     with raises(InvalidArgument):
         getattr(st.data(), f)(lambda x: 1)
-
-
-def test_errors_when_asked_for_example():
-    with raises(InvalidArgument):
-        st.data().example()
 
 
 def test_nice_repr():

@@ -12,6 +12,8 @@ import pytest
 
 from hypothesis import Phase, given, seed, settings, strategies as st, target
 
+from tests.common.utils import Why, xfail_on_crosshair
+
 pytest_plugins = "pytester"
 
 TESTSUITE = """
@@ -32,7 +34,7 @@ def test_reports_target_results(testdir, multiple):
     result = testdir.runpytest(script, "--tb=native", "-rN")
     out = "\n".join(result.stdout.lines)
     assert "Falsifying example" in out
-    assert "x=101" in out
+    assert "x=101" in out, out
     assert out.count("Highest target score") == 1
     assert result.ret != 0
 
@@ -57,29 +59,36 @@ def test_target_returns_value(a, b):
     assert isinstance(difference, int)
 
 
+@xfail_on_crosshair(Why.symbolic_outside_context)
 def test_targeting_can_be_disabled():
     strat = st.lists(st.integers(0, 255))
 
     def score(enabled):
-        result = [0]
+        result = 0
         phases = [Phase.generate]
         if enabled:
             phases.append(Phase.target)
 
         @seed(0)
-        @settings(database=None, max_examples=200, phases=phases)
+        @settings(database=None, max_examples=100, phases=phases)
         @given(strat)
         def test(ls):
-            score = float(sum(ls))
-            result[0] = max(result[0], score)
+            nonlocal result
+            # cap the score to avoid long test times by unbounded driving of list
+            # length upwards
+            score = min(sum(ls), 10_000)
+            result = max(result, score)
             target(score)
 
         test()
-        return result[0]
+        return result
 
     assert score(enabled=True) > score(enabled=False)
 
 
+@pytest.mark.skipif(
+    settings._current_profile == "crosshair", reason="takes ~15 minutes"
+)
 def test_issue_2395_regression():
     @given(d=st.floats().filter(lambda x: abs(x) < 1000))
     @settings(max_examples=1000, database=None)

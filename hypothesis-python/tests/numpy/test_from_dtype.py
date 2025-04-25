@@ -19,7 +19,9 @@ from hypothesis.extra import numpy as nps
 from hypothesis.internal.floats import width_smallest_normals
 from hypothesis.strategies._internal import SearchStrategy
 
-from tests.common.debug import assert_no_examples, find_any
+from tests.common.debug import assert_no_examples, check_can_generate_examples, find_any
+
+np_version = tuple(int(x) for x in np.__version__.split(".")[:2])
 
 STANDARD_TYPES = [
     np.dtype(t)
@@ -67,7 +69,7 @@ def test_produces_instances(t):
     test_is_t()
 
 
-@settings(max_examples=100)
+@settings(max_examples=100, deadline=None)
 @given(nps.nested_dtypes(max_itemsize=400), st.data())
 def test_infer_strategy_from_dtype(dtype, data):
     # Given a dtype
@@ -116,7 +118,7 @@ def test_unicode_string_dtypes_need_not_be_utf8():
         except UnicodeEncodeError:
             return True
 
-    find_any(nps.from_dtype(np.dtype("U")), cannot_encode)
+    find_any(nps.from_dtype(np.dtype("U")), cannot_encode, settings(max_examples=5000))
 
 
 @given(st.data())
@@ -126,7 +128,13 @@ def test_byte_string_dtypes_generate_unicode_strings(data):
     assert isinstance(result, bytes)
 
 
-@pytest.mark.parametrize("dtype", ["U", "S", "a"])
+skipif_np2 = pytest.mark.skipif(np_version >= (2, 0), reason="removed in new version")
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    ["U", "S", pytest.param("a", marks=skipif_np2)],
+)
 def test_unsized_strings_length_gt_one(dtype):
     # See https://github.com/HypothesisWorks/hypothesis/issues/2229
     find_any(nps.arrays(dtype=dtype, shape=1), lambda arr: len(arr[0]) >= 2)
@@ -181,9 +189,18 @@ def test_arrays_selects_consistent_time_unit(data, dtype_str):
     assert (dtype_str + "[") in arr.dtype.str
 
 
+@pytest.mark.parametrize("dtype", ["m8", "M8"])
+def test_from_dtype_can_include_or_exclude_nat(dtype):
+    find_any(nps.from_dtype(np.dtype(dtype), allow_nan=None), np.isnat)
+    find_any(nps.from_dtype(np.dtype(dtype), allow_nan=True), np.isnat)
+    assert_no_examples(nps.from_dtype(np.dtype(dtype), allow_nan=False), np.isnat)
+
+
 def test_arrays_gives_useful_error_on_inconsistent_time_unit():
     with pytest.raises(InvalidArgument, match="mismatch of time units in dtypes"):
-        nps.arrays("m8[Y]", 10, elements=nps.from_dtype(np.dtype("m8[D]"))).example()
+        check_can_generate_examples(
+            nps.arrays("m8[Y]", 10, elements=nps.from_dtype(np.dtype("m8[D]")))
+        )
 
 
 @pytest.mark.parametrize(
@@ -203,6 +220,9 @@ def test_arrays_gives_useful_error_on_inconsistent_time_unit():
         (complex, {"allow_nan": False}, lambda x: not np.isnan(x)),
         (complex, {"allow_infinity": False}, lambda x: not np.isinf(x)),
         (complex, {"allow_nan": False, "allow_infinity": False}, np.isfinite),
+        # Note we accept epsilon errors here as internally sqrt is used to draw
+        # complex numbers. sqrt on some platforms gets epsilon errors, which is
+        # too tricky to filter out and so - for now - we just accept them.
         (
             complex,
             {"min_magnitude": 1e3},
@@ -255,11 +275,10 @@ def test_float_subnormal_generation(allow_subnormal, width):
         lambda n: n != 0
     )
     smallest_normal = width_smallest_normals[width]
-    condition = lambda n: -smallest_normal < n < smallest_normal
     if allow_subnormal:
-        find_any(strat, condition)
+        find_any(strat, lambda n: -smallest_normal < n < smallest_normal)
     else:
-        assert_no_examples(strat, condition)
+        assert_no_examples(strat, lambda n: -smallest_normal < n < smallest_normal)
 
 
 @pytest.mark.parametrize("allow_subnormal", [False, True])
@@ -270,10 +289,13 @@ def test_complex_subnormal_generation(allow_subnormal, width):
         lambda n: n.real != 0 and n.imag != 0
     )
     smallest_normal = width_smallest_normals[width / 2]
-    condition = lambda n: (
-        -smallest_normal < n.real < smallest_normal
-        or -smallest_normal < n.imag < smallest_normal
-    )
+
+    def condition(n):
+        return (
+            -smallest_normal < n.real < smallest_normal
+            or -smallest_normal < n.imag < smallest_normal
+        )
+
     if allow_subnormal:
         find_any(strat, condition)
     else:

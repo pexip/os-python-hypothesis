@@ -8,56 +8,91 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+import math
 import time
 from collections import defaultdict
+from collections.abc import Hashable, Iterable, Iterator, Sequence
 from enum import IntEnum
+from functools import cached_property
 from random import Random
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    FrozenSet,
-    Hashable,
-    Iterable,
-    Iterator,
-    List,
-    Optional,
-    Sequence,
-    Set,
-    Tuple,
-    Type,
-    Union,
-)
+from typing import TYPE_CHECKING, Any, NoReturn, Optional, TypeVar, Union
 
 import attr
 
-from hypothesis.errors import Frozen, InvalidArgument, StopTest
-from hypothesis.internal.compat import int_from_bytes, int_to_bytes
-from hypothesis.internal.conjecture.junkdrawer import IntList, uniform
+from hypothesis.errors import (
+    CannotProceedScopeT,
+    ChoiceTooLarge,
+    Frozen,
+    InvalidArgument,
+    StopTest,
+)
+from hypothesis.internal.cache import LRUCache
+from hypothesis.internal.compat import add_note
+from hypothesis.internal.conjecture.choice import (
+    BooleanKWargs,
+    BytesKWargs,
+    ChoiceKwargsT,
+    ChoiceNode,
+    ChoiceT,
+    ChoiceTemplate,
+    ChoiceTypeT,
+    FloatKWargs,
+    IntegerKWargs,
+    StringKWargs,
+    choice_from_index,
+    choice_kwargs_key,
+    choice_permitted,
+    choices_size,
+)
+from hypothesis.internal.conjecture.junkdrawer import IntList, gc_cumulative_time
+from hypothesis.internal.conjecture.providers import (
+    COLLECTION_DEFAULT_MAX_SIZE,
+    HypothesisProvider,
+    PrimitiveProvider,
+)
 from hypothesis.internal.conjecture.utils import calc_label_from_name
+from hypothesis.internal.escalation import InterestingOrigin
+from hypothesis.internal.floats import (
+    SMALLEST_SUBNORMAL,
+    float_to_int,
+    int_to_float,
+    sign_aware_lte,
+)
+from hypothesis.internal.intervalsets import IntervalSet
+from hypothesis.reporting import debug_report
 
 if TYPE_CHECKING:
-    from typing_extensions import dataclass_transform
+    from typing import TypeAlias
 
     from hypothesis.strategies import SearchStrategy
     from hypothesis.strategies._internal.strategies import Ex
-else:
 
-    def dataclass_transform():
-        def wrapper(tp):
-            return tp
 
-        return wrapper
+def __getattr__(name: str) -> Any:
+    if name == "AVAILABLE_PROVIDERS":
+        from hypothesis._settings import note_deprecation
+        from hypothesis.internal.conjecture.providers import AVAILABLE_PROVIDERS
 
+        note_deprecation(
+            "hypothesis.internal.conjecture.data.AVAILABLE_PROVIDERS has been moved to "
+            "hypothesis.internal.conjecture.providers.AVAILABLE_PROVIDERS.",
+            since="2025-01-25",
+            has_codemod=False,
+            stacklevel=1,
+        )
+        return AVAILABLE_PROVIDERS
+
+    raise AttributeError(
+        f"Module 'hypothesis.internal.conjecture.data' has no attribute {name}"
+    )
+
+
+T = TypeVar("T")
+TargetObservations = dict[str, Union[int, float]]
+# index, choice_type, kwargs, forced value
+MisalignedAt: "TypeAlias" = tuple[int, ChoiceTypeT, ChoiceKwargsT, Optional[ChoiceT]]
 
 TOP_LABEL = calc_label_from_name("top")
-DRAW_BYTES_LABEL = calc_label_from_name("draw_bytes() in ConjectureData")
-
-
-InterestingOrigin = Tuple[
-    Type[BaseException], str, int, Tuple[Any, ...], Tuple[Tuple[Any, ...], ...]
-]
-TargetObservations = Dict[Optional[str], Union[int, float]]
 
 
 class ExtraInformation:
@@ -83,13 +118,12 @@ class Status(IntEnum):
         return f"Status.{self.name}"
 
 
-@dataclass_transform()
-@attr.s(frozen=True, slots=True, auto_attribs=True)
+@attr.s(slots=True, frozen=True)
 class StructuralCoverageTag:
-    label: int
+    label: int = attr.ib()
 
 
-STRUCTURAL_COVERAGE_CACHE: Dict[int, StructuralCoverageTag] = {}
+STRUCTURAL_COVERAGE_CACHE: dict[int, StructuralCoverageTag] = {}
 
 
 def structural_coverage(label: int) -> StructuralCoverageTag:
@@ -99,225 +133,180 @@ def structural_coverage(label: int) -> StructuralCoverageTag:
         return STRUCTURAL_COVERAGE_CACHE.setdefault(label, StructuralCoverageTag(label))
 
 
-class Example:
-    """Examples track the hierarchical structure of draws from the byte stream,
-    within a single test run.
+# This cache can be quite hot and so we prefer LRUCache over LRUReusedCache for
+# performance. We lose scan resistance, but that's probably fine here.
+POOLED_KWARGS_CACHE = LRUCache(4096)
 
-    Examples are created to mark regions of the byte stream that might be
-    useful to the shrinker, such as:
-    - The bytes used by a single draw from a strategy.
-    - Useful groupings within a strategy, such as individual list elements.
-    - Strategy-like helper functions that aren't first-class strategies.
-    - Each lowest-level draw of bits or bytes from the byte stream.
-    - A single top-level example that spans the entire input.
 
-    Example-tracking allows the shrinker to try "high-level" transformations,
-    such as rearranging or deleting the elements of a list, without having
-    to understand their exact representation in the byte stream.
+class Span:
+    """A span tracks the hierarchical structure of choices within a single test run.
 
-    Rather than store each ``Example`` as a rich object, it is actually
-    just an index into the ``Examples`` class defined below. This has two
-    purposes: Firstly, for most properties of examples we will never need
+    Spans are created to mark regions of the choice sequence that that are
+    logically related to each other. For instance, Hypothesis tracks:
+    - A single top-level span for the entire choice sequence
+    - A span for the choices made by each strategy
+    - Some strategies define additional spans within their choices. For instance,
+      st.lists() tracks the "should add another element" choice and the "add
+      another element" choices as separate spans.
+
+    Spans provide useful information to the shrinker, mutator, targeted PBT,
+    and other subsystems of Hypothesis.
+
+    Rather than store each ``Span`` as a rich object, it is actually
+    just an index into the ``Spans`` class defined below. This has two
+    purposes: Firstly, for most properties of spans we will never need
     to allocate storage at all, because most properties are not used on
-    most examples. Secondly, by storing the properties as compact lists
+    most spans. Secondly, by storing the spans as compact lists
     of integers, we save a considerable amount of space compared to
     Python's normal object size.
 
     This does have the downside that it increases the amount of allocation
     we do, and slows things down as a result, in some usage patterns because
-    we repeatedly allocate the same Example or int objects, but it will
+    we repeatedly allocate the same Span or int objects, but it will
     often dramatically reduce our memory usage, so is worth it.
     """
 
-    __slots__ = ("owner", "index")
+    __slots__ = ("index", "owner")
 
-    def __init__(self, owner: "Examples", index: int) -> None:
+    def __init__(self, owner: "Spans", index: int) -> None:
         self.owner = owner
         self.index = index
 
     def __eq__(self, other: object) -> bool:
         if self is other:
             return True
-        if not isinstance(other, Example):
+        if not isinstance(other, Span):
             return NotImplemented
         return (self.owner is other.owner) and (self.index == other.index)
 
     def __ne__(self, other: object) -> bool:
         if self is other:
             return False
-        if not isinstance(other, Example):
+        if not isinstance(other, Span):
             return NotImplemented
         return (self.owner is not other.owner) or (self.index != other.index)
 
     def __repr__(self) -> str:
-        return f"examples[{self.index}]"
+        return f"spans[{self.index}]"
 
     @property
     def label(self) -> int:
-        """A label is an opaque value that associates each example with its
+        """A label is an opaque value that associates each span with its
         approximate origin, such as a particular strategy class or a particular
         kind of draw."""
         return self.owner.labels[self.owner.label_indices[self.index]]
 
     @property
-    def parent(self):
-        """The index of the example that this one is nested directly within."""
+    def parent(self) -> Optional[int]:
+        """The index of the span that this one is nested directly within."""
         if self.index == 0:
             return None
         return self.owner.parentage[self.index]
 
     @property
     def start(self) -> int:
-        """The position of the start of this example in the byte stream."""
         return self.owner.starts[self.index]
 
     @property
     def end(self) -> int:
-        """The position directly after the last byte in this byte stream.
-        i.e. the example corresponds to the half open region [start, end).
-        """
         return self.owner.ends[self.index]
 
     @property
-    def depth(self):
-        """Depth of this example in the example tree. The top-level example has a
-        depth of 0."""
+    def depth(self) -> int:
+        """
+        Depth of this span in the span tree. The top-level span has a depth of 0.
+        """
         return self.owner.depths[self.index]
 
     @property
-    def trivial(self):
-        """An example is "trivial" if it only contains forced bytes and zero bytes.
-        All examples start out as trivial, and then get marked non-trivial when
-        we see a byte that is neither forced nor zero."""
-        return self.index in self.owner.trivial
-
-    @property
     def discarded(self) -> bool:
-        """True if this is example's ``stop_example`` call had ``discard`` set to
+        """True if this is span's ``stop_span`` call had ``discard`` set to
         ``True``. This means we believe that the shrinker should be able to delete
-        this example completely, without affecting the value produced by its enclosing
+        this span completely, without affecting the value produced by its enclosing
         strategy. Typically set when a rejection sampler decides to reject a
         generated value and try again."""
         return self.index in self.owner.discarded
 
     @property
-    def length(self) -> int:
-        """The number of bytes in this example."""
+    def choice_count(self) -> int:
+        """The number of choices in this span."""
         return self.end - self.start
 
     @property
-    def children(self) -> "List[Example]":
-        """The list of all examples with this as a parent, in increasing index
+    def children(self) -> "list[Span]":
+        """The list of all spans with this as a parent, in increasing index
         order."""
         return [self.owner[i] for i in self.owner.children[self.index]]
 
 
-class ExampleProperty:
-    """There are many properties of examples that we calculate by
+class SpanProperty:
+    """There are many properties of spans that we calculate by
     essentially rerunning the test case multiple times based on the
-    calls which we record in ExampleRecord.
+    calls which we record in SpanProperty.
 
     This class defines a visitor, subclasses of which can be used
     to calculate these properties.
     """
 
-    def __init__(self, examples: "Examples"):
-        self.example_stack: "List[int]" = []
-        self.examples = examples
-        self.bytes_read = 0
-        self.example_count = 0
-        self.block_count = 0
+    def __init__(self, spans: "Spans"):
+        self.span_stack: list[int] = []
+        self.spans = spans
+        self.span_count = 0
+        self.choice_count = 0
 
     def run(self) -> Any:
         """Rerun the test case with this visitor and return the
         results of ``self.finish()``."""
-        self.begin()
-        blocks = self.examples.blocks
-        for record in self.examples.trail:
-            if record == DRAW_BITS_RECORD:
-                self.__push(0)
-                self.bytes_read = blocks.endpoints[self.block_count]
-                self.block(self.block_count)
-                self.block_count += 1
-                self.__pop(False)
-            elif record >= START_EXAMPLE_RECORD:
-                self.__push(record - START_EXAMPLE_RECORD)
+        for record in self.spans.trail:
+            if record == TrailType.CHOICE:
+                self.choice_count += 1
+            elif record >= TrailType.START_SPAN:
+                self.__push(record - TrailType.START_SPAN)
             else:
                 assert record in (
-                    STOP_EXAMPLE_DISCARD_RECORD,
-                    STOP_EXAMPLE_NO_DISCARD_RECORD,
+                    TrailType.STOP_SPAN_DISCARD,
+                    TrailType.STOP_SPAN_NO_DISCARD,
                 )
-                self.__pop(record == STOP_EXAMPLE_DISCARD_RECORD)
+                self.__pop(discarded=record == TrailType.STOP_SPAN_DISCARD)
         return self.finish()
 
     def __push(self, label_index: int) -> None:
-        i = self.example_count
-        assert i < len(self.examples)
-        self.start_example(i, label_index)
-        self.example_count += 1
-        self.example_stack.append(i)
+        i = self.span_count
+        assert i < len(self.spans)
+        self.start_span(i, label_index=label_index)
+        self.span_count += 1
+        self.span_stack.append(i)
 
-    def __pop(self, discarded: bool) -> None:
-        i = self.example_stack.pop()
-        self.stop_example(i, discarded)
+    def __pop(self, *, discarded: bool) -> None:
+        i = self.span_stack.pop()
+        self.stop_span(i, discarded=discarded)
 
-    def begin(self) -> None:
-        """Called at the beginning of the run to initialise any
-        relevant state."""
-        self.result = IntList.of_length(len(self.examples))
+    def start_span(self, i: int, label_index: int) -> None:
+        """Called at the start of each span, with ``i`` the
+        index of the span and ``label_index`` the index of
+        its label in ``self.spans.labels``."""
 
-    def start_example(self, i: int, label_index: int) -> None:
-        """Called at the start of each example, with ``i`` the
-        index of the example and ``label_index`` the index of
-        its label in ``self.examples.labels``."""
-
-    def block(self, i: int) -> None:
-        """Called with each ``draw_bits`` call, with ``i`` the index of the
-        corresponding block in ``self.examples.blocks``"""
-
-    def stop_example(self, i: int, discarded: bool) -> None:
-        """Called at the end of each example, with ``i`` the
-        index of the example and ``discarded`` being ``True`` if ``stop_example``
+    def stop_span(self, i: int, *, discarded: bool) -> None:
+        """Called at the end of each span, with ``i`` the
+        index of the span and ``discarded`` being ``True`` if ``stop_span``
         was called with ``discard=True``."""
 
     def finish(self) -> Any:
-        return self.result
+        raise NotImplementedError
 
 
-def calculated_example_property(cls: Type[ExampleProperty]) -> Any:
-    """Given an ``ExampleProperty`` as above we use this decorator
-    to transform it into a lazy property on the ``Examples`` class,
-    which has as its value the result of calling ``cls.run()``,
-    computed the first time the property is accessed.
-
-    This has the slightly weird result that we are defining nested
-    classes which get turned into properties."""
-    name = cls.__name__
-    cache_name = "__" + name
-
-    def lazy_calculate(self: "Examples") -> IntList:
-        result = getattr(self, cache_name, None)
-        if result is None:
-            result = cls(self).run()
-            setattr(self, cache_name, result)
-        return result
-
-    lazy_calculate.__name__ = cls.__name__
-    lazy_calculate.__qualname__ = cls.__qualname__
-    return property(lazy_calculate)
+class TrailType(IntEnum):
+    STOP_SPAN_DISCARD = 1
+    STOP_SPAN_NO_DISCARD = 2
+    START_SPAN = 3
+    CHOICE = calc_label_from_name("ir draw record")
 
 
-DRAW_BITS_RECORD = 0
-STOP_EXAMPLE_DISCARD_RECORD = 1
-STOP_EXAMPLE_NO_DISCARD_RECORD = 2
-START_EXAMPLE_RECORD = 3
-
-
-class ExampleRecord:
-    """Records the series of ``start_example``, ``stop_example``, and
-    ``draw_bits`` calls so that these may be stored in ``Examples`` and
+class SpanRecord:
+    """Records the series of ``start_span``, ``stop_span``, and
+    ``draw_bits`` calls so that these may be stored in ``Spans`` and
     replayed when we need to know about the structure of individual
-    ``Example`` objects.
+    ``Span`` objects.
 
     Note that there is significant similarity between this class and
     ``DataObserver``, and the plan is to eventually unify them, but
@@ -325,71 +314,139 @@ class ExampleRecord:
     """
 
     def __init__(self) -> None:
-        self.labels = [DRAW_BYTES_LABEL]
-        self.__index_of_labels: "Optional[Dict[int, int]]" = {DRAW_BYTES_LABEL: 0}
+        self.labels: list[int] = []
+        self.__index_of_labels: Optional[dict[int, int]] = {}
         self.trail = IntList()
+        self.nodes: list[ChoiceNode] = []
 
     def freeze(self) -> None:
         self.__index_of_labels = None
 
-    def start_example(self, label: int) -> None:
+    def record_choice(self) -> None:
+        self.trail.append(TrailType.CHOICE)
+
+    def start_span(self, label: int) -> None:
         assert self.__index_of_labels is not None
         try:
             i = self.__index_of_labels[label]
         except KeyError:
             i = self.__index_of_labels.setdefault(label, len(self.labels))
             self.labels.append(label)
-        self.trail.append(START_EXAMPLE_RECORD + i)
+        self.trail.append(TrailType.START_SPAN + i)
 
-    def stop_example(self, discard: bool) -> None:
+    def stop_span(self, *, discard: bool) -> None:
         if discard:
-            self.trail.append(STOP_EXAMPLE_DISCARD_RECORD)
+            self.trail.append(TrailType.STOP_SPAN_DISCARD)
         else:
-            self.trail.append(STOP_EXAMPLE_NO_DISCARD_RECORD)
-
-    def draw_bits(self, n: int, forced: Optional[int]) -> None:
-        self.trail.append(DRAW_BITS_RECORD)
+            self.trail.append(TrailType.STOP_SPAN_NO_DISCARD)
 
 
-class Examples:
-    """A lazy collection of ``Example`` objects, derived from
-    the record of recorded behaviour in ``ExampleRecord``.
+class _starts_and_ends(SpanProperty):
+    def __init__(self, spans: "Spans") -> None:
+        super().__init__(spans)
+        self.starts = IntList.of_length(len(self.spans))
+        self.ends = IntList.of_length(len(self.spans))
 
-    Behaves logically as if it were a list of ``Example`` objects,
+    def start_span(self, i: int, label_index: int) -> None:
+        self.starts[i] = self.choice_count
+
+    def stop_span(self, i: int, *, discarded: bool) -> None:
+        self.ends[i] = self.choice_count
+
+    def finish(self) -> tuple[IntList, IntList]:
+        return (self.starts, self.ends)
+
+
+class _discarded(SpanProperty):
+    def __init__(self, spans: "Spans") -> None:
+        super().__init__(spans)
+        self.result: set[int] = set()
+
+    def finish(self) -> frozenset[int]:
+        return frozenset(self.result)
+
+    def stop_span(self, i: int, *, discarded: bool) -> None:
+        if discarded:
+            self.result.add(i)
+
+
+class _parentage(SpanProperty):
+    def __init__(self, spans: "Spans") -> None:
+        super().__init__(spans)
+        self.result = IntList.of_length(len(self.spans))
+
+    def stop_span(self, i: int, *, discarded: bool) -> None:
+        if i > 0:
+            self.result[i] = self.span_stack[-1]
+
+    def finish(self) -> IntList:
+        return self.result
+
+
+class _depths(SpanProperty):
+    def __init__(self, spans: "Spans") -> None:
+        super().__init__(spans)
+        self.result = IntList.of_length(len(self.spans))
+
+    def start_span(self, i: int, label_index: int) -> None:
+        self.result[i] = len(self.span_stack)
+
+    def finish(self) -> IntList:
+        return self.result
+
+
+class _label_indices(SpanProperty):
+    def __init__(self, spans: "Spans") -> None:
+        super().__init__(spans)
+        self.result = IntList.of_length(len(self.spans))
+
+    def start_span(self, i: int, label_index: int) -> None:
+        self.result[i] = label_index
+
+    def finish(self) -> IntList:
+        return self.result
+
+
+class _mutator_groups(SpanProperty):
+    def __init__(self, spans: "Spans") -> None:
+        super().__init__(spans)
+        self.groups: dict[int, set[tuple[int, int]]] = defaultdict(set)
+
+    def start_span(self, i: int, label_index: int) -> None:
+        # TODO should we discard start == end cases? occurs for eg st.data()
+        # which is conditionally or never drawn from. arguably swapping
+        # nodes with the empty list is a useful mutation enabled by start == end?
+        key = (self.spans[i].start, self.spans[i].end)
+        self.groups[label_index].add(key)
+
+    def finish(self) -> Iterable[set[tuple[int, int]]]:
+        # Discard groups with only one span, since the mutator can't
+        # do anything useful with them.
+        return [g for g in self.groups.values() if len(g) >= 2]
+
+
+class Spans:
+    """A lazy collection of ``Span`` objects, derived from
+    the record of recorded behaviour in ``SpanRecord``.
+
+    Behaves logically as if it were a list of ``Span`` objects,
     but actually mostly exists as a compact store of information
     for them to reference into. All properties on here are best
-    understood as the backing storage for ``Example`` and are
+    understood as the backing storage for ``Span`` and are
     described there.
     """
 
-    def __init__(self, record: ExampleRecord, blocks: "Blocks") -> None:
+    def __init__(self, record: SpanRecord) -> None:
         self.trail = record.trail
         self.labels = record.labels
-        self.__length = (
-            self.trail.count(STOP_EXAMPLE_DISCARD_RECORD)
-            + record.trail.count(STOP_EXAMPLE_NO_DISCARD_RECORD)
-            + record.trail.count(DRAW_BITS_RECORD)
-        )
-        self.blocks = blocks
-        self.__children: "Optional[List[Sequence[int]]]" = None
+        self.__length = self.trail.count(
+            TrailType.STOP_SPAN_DISCARD
+        ) + record.trail.count(TrailType.STOP_SPAN_NO_DISCARD)
+        self.__children: Optional[list[Sequence[int]]] = None
 
-    class _starts_and_ends(ExampleProperty):
-        def begin(self):
-            self.starts = IntList.of_length(len(self.examples))
-            self.ends = IntList.of_length(len(self.examples))
-
-        def start_example(self, i: int, label_index: int) -> None:
-            self.starts[i] = self.bytes_read
-
-        def stop_example(self, i: int, discarded: bool) -> None:
-            self.ends[i] = self.bytes_read
-
-        def finish(self) -> Tuple[IntList, IntList]:
-            return (self.starts, self.ends)
-
-    starts_and_ends: "Tuple[IntList, IntList]" = calculated_example_property(
-        _starts_and_ends
-    )
+    @cached_property
+    def starts_and_ends(self) -> tuple[IntList, IntList]:
+        return _starts_and_ends(self).run()
 
     @property
     def starts(self) -> IntList:
@@ -399,79 +456,28 @@ class Examples:
     def ends(self) -> IntList:
         return self.starts_and_ends[1]
 
-    class _discarded(ExampleProperty):
-        def begin(self) -> None:
-            self.result: "Set[int]" = set()  # type: ignore  # IntList in parent class
+    @cached_property
+    def discarded(self) -> frozenset[int]:
+        return _discarded(self).run()
 
-        def finish(self) -> FrozenSet[int]:
-            return frozenset(self.result)
+    @cached_property
+    def parentage(self) -> IntList:
+        return _parentage(self).run()
 
-        def stop_example(self, i: int, discarded: bool) -> None:
-            if discarded:
-                self.result.add(i)
+    @cached_property
+    def depths(self) -> IntList:
+        return _depths(self).run()
 
-    discarded: FrozenSet[int] = calculated_example_property(_discarded)
+    @cached_property
+    def label_indices(self) -> IntList:
+        return _label_indices(self).run()
 
-    class _trivial(ExampleProperty):
-        def begin(self) -> None:
-            self.nontrivial = IntList.of_length(len(self.examples))
-            self.result: "Set[int]" = set()  # type: ignore  # IntList in parent class
-
-        def block(self, i: int) -> None:
-            if not self.examples.blocks.trivial(i):
-                self.nontrivial[self.example_stack[-1]] = 1
-
-        def stop_example(self, i: int, discarded: bool) -> None:
-            if self.nontrivial[i]:
-                if self.example_stack:
-                    self.nontrivial[self.example_stack[-1]] = 1
-            else:
-                self.result.add(i)
-
-        def finish(self) -> FrozenSet[int]:
-            return frozenset(self.result)
-
-    trivial: FrozenSet[int] = calculated_example_property(_trivial)
-
-    class _parentage(ExampleProperty):
-        def stop_example(self, i: int, discarded: bool) -> None:
-            if i > 0:
-                self.result[i] = self.example_stack[-1]
-
-    parentage: IntList = calculated_example_property(_parentage)
-
-    class _depths(ExampleProperty):
-        def begin(self):
-            self.result = IntList.of_length(len(self.examples))
-
-        def start_example(self, i: int, label_index: int) -> None:
-            self.result[i] = len(self.example_stack)
-
-    depths: IntList = calculated_example_property(_depths)
-
-    class _label_indices(ExampleProperty):
-        def start_example(self, i: int, label_index: int) -> None:
-            self.result[i] = label_index
-
-    label_indices: IntList = calculated_example_property(_label_indices)
-
-    class _mutator_groups(ExampleProperty):
-        def begin(self) -> None:
-            self.groups: "Dict[Tuple[int, int], List[int]]" = defaultdict(list)
-
-        def start_example(self, i: int, label_index: int) -> None:
-            depth = len(self.example_stack)
-            self.groups[label_index, depth].append(i)
-
-        def finish(self) -> Iterable[Iterable[int]]:
-            # Discard groups with only one example, since the mutator can't
-            # do anything useful with them.
-            return [g for g in self.groups.values() if len(g) >= 2]
-
-    mutator_groups: List[List[int]] = calculated_example_property(_mutator_groups)
+    @cached_property
+    def mutator_groups(self) -> list[set[tuple[int, int]]]:
+        return _mutator_groups(self).run()
 
     @property
-    def children(self) -> List[Sequence[int]]:
+    def children(self) -> list[Sequence[int]]:
         if self.__children is None:
             children = [IntList() for _ in range(len(self))]
             for i, p in enumerate(self.parentage):
@@ -488,237 +494,26 @@ class Examples:
     def __len__(self) -> int:
         return self.__length
 
-    def __getitem__(self, i: int) -> Example:
-        assert isinstance(i, int)
-        n = len(self)
+    def __getitem__(self, i: int) -> Span:
+        n = self.__length
         if i < -n or i >= n:
             raise IndexError(f"Index {i} out of range [-{n}, {n})")
         if i < 0:
             i += n
-        return Example(self, i)
+        return Span(self, i)
 
-
-@dataclass_transform()
-@attr.s(slots=True, frozen=True)
-class Block:
-    """Blocks track the flat list of lowest-level draws from the byte stream,
-    within a single test run.
-
-    Block-tracking allows the shrinker to try "low-level"
-    transformations, such as minimizing the numeric value of an
-    individual call to ``draw_bits``.
-    """
-
-    start: int = attr.ib()
-    end: int = attr.ib()
-
-    # Index of this block inside the overall list of blocks.
-    index: int = attr.ib()
-
-    # True if this block's byte values were forced by a write operation.
-    # As long as the bytes before this block remain the same, modifying this
-    # block's bytes will have no effect.
-    forced: bool = attr.ib(repr=False)
-
-    # True if this block's byte values are all 0. Reading this flag can be
-    # more convenient than explicitly checking a slice for non-zero bytes.
-    all_zero: bool = attr.ib(repr=False)
-
-    @property
-    def bounds(self) -> Tuple[int, int]:
-        return (self.start, self.end)
-
-    @property
-    def length(self) -> int:
-        return self.end - self.start
-
-    @property
-    def trivial(self) -> bool:
-        return self.forced or self.all_zero
-
-
-class Blocks:
-    """A lazily calculated list of blocks for a particular ``ConjectureResult``
-    or ``ConjectureData`` object.
-
-    Pretends to be a list containing ``Block`` objects but actually only
-    contains their endpoints right up until the point where you want to
-    access the actual block, at which point it is constructed.
-
-    This is designed to be as space efficient as possible, so will at
-    various points silently transform its representation into one
-    that is better suited for the current access pattern.
-
-    In addition, it has a number of convenience methods for accessing
-    properties of the block object at index ``i`` that should generally
-    be preferred to using the Block objects directly, as it will not
-    have to allocate the actual object."""
-
-    __slots__ = ("endpoints", "owner", "__blocks", "__count", "__sparse")
-    owner: "Union[ConjectureData, ConjectureResult, None]"
-    __blocks: Union[Dict[int, Block], List[Optional[Block]]]
-
-    def __init__(self, owner: "ConjectureData") -> None:
-        self.owner = owner
-        self.endpoints = IntList()
-        self.__blocks = {}
-        self.__count = 0
-        self.__sparse = True
-
-    def add_endpoint(self, n: int) -> None:
-        """Add n to the list of endpoints."""
-        assert isinstance(self.owner, ConjectureData)
-        self.endpoints.append(n)
-
-    def transfer_ownership(self, new_owner: "ConjectureResult") -> None:
-        """Used to move ``Blocks`` over to a ``ConjectureResult`` object
-        when that is read to be used and we no longer want to keep the
-        whole ``ConjectureData`` around."""
-        assert isinstance(new_owner, ConjectureResult)
-        self.owner = new_owner
-        self.__check_completion()
-
-    def start(self, i: int) -> int:
-        """Equivalent to self[i].start."""
-        i = self._check_index(i)
-
-        if i == 0:
-            return 0
-        else:
-            return self.end(i - 1)
-
-    def end(self, i: int) -> int:
-        """Equivalent to self[i].end."""
-        return self.endpoints[i]
-
-    def bounds(self, i: int) -> Tuple[int, int]:
-        """Equivalent to self[i].bounds."""
-        return (self.start(i), self.end(i))
-
-    def all_bounds(self) -> Iterable[Tuple[int, int]]:
-        """Equivalent to [(b.start, b.end) for b in self]."""
-        prev = 0
-        for e in self.endpoints:
-            yield (prev, e)
-            prev = e
-
-    @property
-    def last_block_length(self):
-        return self.end(-1) - self.start(-1)
-
-    def __len__(self) -> int:
-        return len(self.endpoints)
-
-    def __known_block(self, i: int) -> Optional[Block]:
-        try:
-            return self.__blocks[i]
-        except (KeyError, IndexError):
-            return None
-
-    def trivial(self, i: int) -> Any:
-        """Equivalent to self.blocks[i].trivial."""
-        if self.owner is not None:
-            return self.start(i) in self.owner.forced_indices or not any(
-                self.owner.buffer[self.start(i) : self.end(i)]
-            )
-        else:
-            return self[i].trivial
-
-    def _check_index(self, i: int) -> int:
-        n = len(self)
-        if i < -n or i >= n:
-            raise IndexError(f"Index {i} out of range [-{n}, {n})")
-        if i < 0:
-            i += n
-        return i
-
-    def __getitem__(self, i: int) -> Block:
-        i = self._check_index(i)
-        assert i >= 0
-        result = self.__known_block(i)
-        if result is not None:
-            return result
-
-        # We store the blocks as a sparse dict mapping indices to the
-        # actual result, but this isn't the best representation once we
-        # stop being sparse and want to use most of the blocks. Switch
-        # over to a list at that point.
-        if self.__sparse and len(self.__blocks) * 2 >= len(self):
-            new_blocks: "List[Optional[Block]]" = [None] * len(self)
-            assert isinstance(self.__blocks, dict)
-            for k, v in self.__blocks.items():
-                new_blocks[k] = v
-            self.__sparse = False
-            self.__blocks = new_blocks
-            assert self.__blocks[i] is None
-
-        start = self.start(i)
-        end = self.end(i)
-
-        # We keep track of the number of blocks that have actually been
-        # instantiated so that when every block that could be instantiated
-        # has been we know that the list is complete and can throw away
-        # some data that we no longer need.
-        self.__count += 1
-
-        # Integrity check: We can't have allocated more blocks than we have
-        # positions for blocks.
-        assert self.__count <= len(self)
-        assert self.owner is not None
-        result = Block(
-            start=start,
-            end=end,
-            index=i,
-            forced=start in self.owner.forced_indices,
-            all_zero=not any(self.owner.buffer[start:end]),
-        )
-        try:
-            self.__blocks[i] = result
-        except IndexError:
-            assert isinstance(self.__blocks, list)
-            assert len(self.__blocks) < len(self)
-            self.__blocks.extend([None] * (len(self) - len(self.__blocks)))
-            self.__blocks[i] = result
-
-        self.__check_completion()
-
-        return result
-
-    def __check_completion(self):
-        """The list of blocks is complete if we have created every ``Block``
-        object that we currently good and know that no more will be created.
-
-        If this happens then we don't need to keep the reference to the
-        owner around, and delete it so that there is no circular reference.
-        The main benefit of this is that the gc doesn't need to run to collect
-        this because normal reference counting is enough.
-        """
-        if self.__count == len(self) and isinstance(self.owner, ConjectureResult):
-            self.owner = None
-
-    def __iter__(self) -> Iterator[Block]:
+    # not strictly necessary as we have len/getitem, but required for mypy.
+    # https://github.com/python/mypy/issues/9737
+    def __iter__(self) -> Iterator[Span]:
         for i in range(len(self)):
             yield self[i]
 
-    def __repr__(self) -> str:
-        parts: "List[str]" = []
-        for i in range(len(self)):
-            b = self.__known_block(i)
-            if b is None:
-                parts.append("...")
-            else:
-                parts.append(repr(b))
-        return "Block([{}])".format(", ".join(parts))
-
 
 class _Overrun:
-    status = Status.OVERRUN
+    status: Status = Status.OVERRUN
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "Overrun"
-
-    def as_result(self) -> "_Overrun":
-        return self
 
 
 Overrun = _Overrun()
@@ -745,20 +540,35 @@ class DataObserver:
         Note that this is called after ``freeze`` has completed.
         """
 
-    def draw_bits(self, n_bits: int, forced: bool, value: int) -> None:
-        """Called when ``draw_bits`` is called on on the
-        observed ``ConjectureData``.
-        * ``n_bits`` is the number of bits drawn.
-        *  ``forced`` is True if the corresponding
-           draw was forced or ``False`` otherwise.
-        * ``value`` is the result that ``draw_bits`` returned.
-        """
-
     def kill_branch(self) -> None:
         """Mark this part of the tree as not worth re-exploring."""
 
+    def draw_integer(
+        self, value: int, *, kwargs: IntegerKWargs, was_forced: bool
+    ) -> None:
+        pass
 
-@dataclass_transform()
+    def draw_float(
+        self, value: float, *, kwargs: FloatKWargs, was_forced: bool
+    ) -> None:
+        pass
+
+    def draw_string(
+        self, value: str, *, kwargs: StringKWargs, was_forced: bool
+    ) -> None:
+        pass
+
+    def draw_bytes(
+        self, value: bytes, *, kwargs: BytesKWargs, was_forced: bool
+    ) -> None:
+        pass
+
+    def draw_boolean(
+        self, value: bool, *, kwargs: BooleanKWargs, was_forced: bool
+    ) -> None:
+        pass
+
+
 @attr.s(slots=True)
 class ConjectureResult:
     """Result class storing the parts of ConjectureData that we
@@ -767,63 +577,80 @@ class ConjectureResult:
 
     status: Status = attr.ib()
     interesting_origin: Optional[InterestingOrigin] = attr.ib()
-    buffer: bytes = attr.ib()
-    blocks: Blocks = attr.ib()
+    nodes: tuple[ChoiceNode, ...] = attr.ib(eq=False, repr=False)
+    length: int = attr.ib()
     output: str = attr.ib()
     extra_information: Optional[ExtraInformation] = attr.ib()
+    expected_exception: Optional[BaseException] = attr.ib()
+    expected_traceback: Optional[str] = attr.ib()
     has_discards: bool = attr.ib()
     target_observations: TargetObservations = attr.ib()
-    tags: FrozenSet[StructuralCoverageTag] = attr.ib()
-    forced_indices: FrozenSet[int] = attr.ib(repr=False)
-    examples: Examples = attr.ib(repr=False)
-
-    index: int = attr.ib(init=False)
-
-    def __attrs_post_init__(self) -> None:
-        self.index = len(self.buffer)
-        self.forced_indices = frozenset(self.forced_indices)
+    tags: frozenset[StructuralCoverageTag] = attr.ib()
+    spans: Spans = attr.ib(repr=False, eq=False)
+    arg_slices: set[tuple[int, int]] = attr.ib(repr=False)
+    slice_comments: dict[tuple[int, int], str] = attr.ib(repr=False)
+    misaligned_at: Optional[MisalignedAt] = attr.ib(repr=False)
+    cannot_proceed_scope: Optional[CannotProceedScopeT] = attr.ib(repr=False)
 
     def as_result(self) -> "ConjectureResult":
         return self
 
-
-# Masks for masking off the first byte of an n-bit buffer.
-# The appropriate mask is stored at position n % 8.
-BYTE_MASKS = [(1 << n) - 1 for n in range(8)]
-BYTE_MASKS[0] = 255
+    @property
+    def choices(self) -> tuple[ChoiceT, ...]:
+        return tuple(node.value for node in self.nodes)
 
 
 class ConjectureData:
     @classmethod
-    def for_buffer(
+    def for_choices(
         cls,
-        buffer: Union[List[int], bytes],
+        choices: Sequence[Union[ChoiceTemplate, ChoiceT]],
+        *,
         observer: Optional[DataObserver] = None,
+        provider: Union[type, PrimitiveProvider] = HypothesisProvider,
+        random: Optional[Random] = None,
     ) -> "ConjectureData":
-        return cls(len(buffer), buffer, random=None, observer=observer)
+        from hypothesis.internal.conjecture.engine import choice_count
+
+        return cls(
+            max_choices=choice_count(choices),
+            random=random,
+            prefix=choices,
+            observer=observer,
+            provider=provider,
+        )
 
     def __init__(
         self,
-        max_length: int,
-        prefix: Union[List[int], bytes, bytearray],
+        *,
         random: Optional[Random],
         observer: Optional[DataObserver] = None,
+        provider: Union[type, PrimitiveProvider] = HypothesisProvider,
+        prefix: Optional[Sequence[Union[ChoiceTemplate, ChoiceT]]] = None,
+        max_choices: Optional[int] = None,
+        provider_kw: Optional[dict[str, Any]] = None,
     ) -> None:
+        from hypothesis.internal.conjecture.engine import BUFFER_SIZE
+
         if observer is None:
             observer = DataObserver()
+        if provider_kw is None:
+            provider_kw = {}
+        elif not isinstance(provider, type):
+            raise InvalidArgument(
+                f"Expected {provider=} to be a class since {provider_kw=} was "
+                "passed, but got an instance instead."
+            )
+
         assert isinstance(observer, DataObserver)
-        self.__bytes_drawn = 0
         self.observer = observer
-        self.max_length = max_length
+        self.max_choices = max_choices
+        self.max_length = BUFFER_SIZE
         self.is_find = False
         self.overdraw = 0
-        self.__prefix = bytes(prefix)
-        self.__random = random
+        self._random = random
 
-        assert random is not None or max_length <= len(prefix)
-
-        self.blocks = Blocks(self)
-        self.buffer: "Union[bytes, bytearray]" = bytearray()
+        self.length = 0
         self.index = 0
         self.output = ""
         self.status = Status.VALID
@@ -832,14 +659,20 @@ class ConjectureData:
         self.testcounter = global_test_counter
         global_test_counter += 1
         self.start_time = time.perf_counter()
-        self.events: "Union[Set[Hashable], FrozenSet[Hashable]]" = set()
-        self.forced_indices: "Set[int]" = set()
+        self.gc_start_time = gc_cumulative_time()
+        self.events: dict[str, Union[str, int, float]] = {}
         self.interesting_origin: Optional[InterestingOrigin] = None
-        self.draw_times: "List[float]" = []
+        self.draw_times: dict[str, float] = {}
+        self._stateful_run_times: dict[str, float] = defaultdict(float)
         self.max_depth = 0
         self.has_discards = False
 
-        self.__result: "Optional[ConjectureResult]" = None
+        self.provider: PrimitiveProvider = (
+            provider(self, **provider_kw) if isinstance(provider, type) else provider
+        )
+        assert isinstance(self.provider, PrimitiveProvider)
+
+        self.__result: Optional[ConjectureResult] = None
 
         # Observations used for targeted search.  They'll be aggregated in
         # ConjectureRunner.generate_new_examples and fed to TargetSelector.
@@ -847,29 +680,361 @@ class ConjectureData:
 
         # Tags which indicate something about which part of the search space
         # this example is in. These are used to guide generation.
-        self.tags: "Set[StructuralCoverageTag]" = set()
-        self.labels_for_structure_stack: "List[Set[int]]" = []
+        self.tags: set[StructuralCoverageTag] = set()
+        self.labels_for_structure_stack: list[set[int]] = []
 
         # Normally unpopulated but we need this in the niche case
         # that self.as_result() is Overrun but we still want the
         # examples for reporting purposes.
-        self.__examples: "Optional[Examples]" = None
+        self.__spans: Optional[Spans] = None
 
-        # We want the top level example to have depth 0, so we start
+        # We want the top level span to have depth 0, so we start
         # at -1.
         self.depth = -1
-        self.__example_record = ExampleRecord()
+        self.__span_record = SpanRecord()
 
+        # Slice indices for discrete reportable parts that which-parts-matter can
+        # try varying, to report if the minimal example always fails anyway.
+        self.arg_slices: set[tuple[int, int]] = set()
+        self.slice_comments: dict[tuple[int, int], str] = {}
+        self._observability_args: dict[str, Any] = {}
+        self._observability_predicates: defaultdict = defaultdict(
+            lambda: {"satisfied": 0, "unsatisfied": 0}
+        )
+        self._sampled_from_all_strategies_elements_message: Optional[
+            tuple[str, object]
+        ] = None
+        self._shared_strategy_draws: dict[Hashable, Any] = {}
+
+        self.expected_exception: Optional[BaseException] = None
+        self.expected_traceback: Optional[str] = None
         self.extra_information = ExtraInformation()
 
-        self.start_example(TOP_LABEL)
+        self.prefix = prefix
+        self.nodes: tuple[ChoiceNode, ...] = ()
+        self.misaligned_at: Optional[MisalignedAt] = None
+        self.cannot_proceed_scope: Optional[CannotProceedScopeT] = None
+        self.start_span(TOP_LABEL)
 
-    def __repr__(self):
-        return "ConjectureData(%s, %d bytes%s)" % (
+    def __repr__(self) -> str:
+        return "ConjectureData(%s, %d choices%s)" % (
             self.status.name,
-            len(self.buffer),
+            len(self.nodes),
             ", frozen" if self.frozen else "",
         )
+
+    @property
+    def choices(self) -> tuple[ChoiceT, ...]:
+        return tuple(node.value for node in self.nodes)
+
+    # draw_* functions might be called in one of two contexts: either "above" or
+    # "below" the choice sequence. For instance, draw_string calls draw_boolean
+    # from ``many`` when calculating the number of characters to return. We do
+    # not want these choices to get written to the choice sequence, because they
+    # are not true choices themselves.
+    #
+    # `observe` formalizes this. The choice will only be written to the choice
+    # sequence if observe is True.
+    def _draw(self, choice_type, kwargs, *, observe, forced):
+        # this is somewhat redundant with the length > max_length check at the
+        # end of the function, but avoids trying to use a null self.random when
+        # drawing past the node of a ConjectureData.for_choices data.
+        if self.length == self.max_length:
+            debug_report(f"overrun because hit {self.max_length=}")
+            self.mark_overrun()
+        if len(self.nodes) == self.max_choices:
+            debug_report(f"overrun because hit {self.max_choices=}")
+            self.mark_overrun()
+
+        if observe and self.prefix is not None and self.index < len(self.prefix):
+            value = self._pop_choice(choice_type, kwargs, forced=forced)
+        elif forced is None:
+            value = getattr(self.provider, f"draw_{choice_type}")(**kwargs)
+
+        if forced is not None:
+            value = forced
+
+        # nan values generated via int_to_float break list membership:
+        #
+        #  >>> n = 18444492273895866368
+        # >>> assert math.isnan(int_to_float(n))
+        # >>> assert int_to_float(n) not in [int_to_float(n)]
+        #
+        # because int_to_float nans are not equal in the sense of either
+        # `a == b` or `a is b`.
+        #
+        # This can lead to flaky errors when collections require unique
+        # floats. What was happening is that in some places we provided math.nan
+        # provide math.nan, and in others we provided
+        # int_to_float(float_to_int(math.nan)), and which one gets used
+        # was not deterministic across test iterations.
+        #
+        # To fix this, *never* provide a nan value which is equal (via `is`) to
+        # another provided nan value. This sacrifices some test power; we should
+        # bring that back (ABOVE the choice sequence layer) in the future.
+        #
+        # See https://github.com/HypothesisWorks/hypothesis/issues/3926.
+        if choice_type == "float" and math.isnan(value):
+            value = int_to_float(float_to_int(value))
+
+        if observe:
+            was_forced = forced is not None
+            getattr(self.observer, f"draw_{choice_type}")(
+                value, kwargs=kwargs, was_forced=was_forced
+            )
+            size = 0 if self.provider.avoid_realization else choices_size([value])
+            if self.length + size > self.max_length:
+                debug_report(
+                    f"overrun because {self.length=} + {size=} > {self.max_length=}"
+                )
+                self.mark_overrun()
+
+            node = ChoiceNode(
+                type=choice_type,
+                value=value,
+                kwargs=kwargs,
+                was_forced=was_forced,
+                index=len(self.nodes),
+            )
+            self.__span_record.record_choice()
+            self.nodes += (node,)
+            self.length += size
+
+        return value
+
+    def draw_integer(
+        self,
+        min_value: Optional[int] = None,
+        max_value: Optional[int] = None,
+        *,
+        weights: Optional[dict[int, float]] = None,
+        shrink_towards: int = 0,
+        forced: Optional[int] = None,
+        observe: bool = True,
+    ) -> int:
+        # Validate arguments
+        if weights is not None:
+            assert min_value is not None
+            assert max_value is not None
+            assert len(weights) <= 255  # arbitrary practical limit
+            # We can and should eventually support total weights. But this
+            # complicates shrinking as we can no longer assume we can force
+            # a value to the unmapped probability mass if that mass might be 0.
+            assert sum(weights.values()) < 1
+            # similarly, things get simpler if we assume every value is possible.
+            # we'll want to drop this restriction eventually.
+            assert all(w != 0 for w in weights.values())
+
+        if forced is not None and min_value is not None:
+            assert min_value <= forced
+        if forced is not None and max_value is not None:
+            assert forced <= max_value
+
+        kwargs: IntegerKWargs = self._pooled_kwargs(
+            "integer",
+            {
+                "min_value": min_value,
+                "max_value": max_value,
+                "weights": weights,
+                "shrink_towards": shrink_towards,
+            },
+        )
+        return self._draw("integer", kwargs, observe=observe, forced=forced)
+
+    def draw_float(
+        self,
+        min_value: float = -math.inf,
+        max_value: float = math.inf,
+        *,
+        allow_nan: bool = True,
+        smallest_nonzero_magnitude: float = SMALLEST_SUBNORMAL,
+        # TODO: consider supporting these float widths at the IR level in the
+        # future.
+        # width: Literal[16, 32, 64] = 64,
+        # exclude_min and exclude_max handled higher up,
+        forced: Optional[float] = None,
+        observe: bool = True,
+    ) -> float:
+        assert smallest_nonzero_magnitude > 0
+        assert not math.isnan(min_value)
+        assert not math.isnan(max_value)
+
+        if forced is not None:
+            assert allow_nan or not math.isnan(forced)
+            assert math.isnan(forced) or (
+                sign_aware_lte(min_value, forced) and sign_aware_lte(forced, max_value)
+            )
+
+        kwargs: FloatKWargs = self._pooled_kwargs(
+            "float",
+            {
+                "min_value": min_value,
+                "max_value": max_value,
+                "allow_nan": allow_nan,
+                "smallest_nonzero_magnitude": smallest_nonzero_magnitude,
+            },
+        )
+        return self._draw("float", kwargs, observe=observe, forced=forced)
+
+    def draw_string(
+        self,
+        intervals: IntervalSet,
+        *,
+        min_size: int = 0,
+        max_size: int = COLLECTION_DEFAULT_MAX_SIZE,
+        forced: Optional[str] = None,
+        observe: bool = True,
+    ) -> str:
+        assert forced is None or min_size <= len(forced) <= max_size
+        assert min_size >= 0
+        if len(intervals) == 0:
+            assert min_size == 0
+
+        kwargs: StringKWargs = self._pooled_kwargs(
+            "string",
+            {
+                "intervals": intervals,
+                "min_size": min_size,
+                "max_size": max_size,
+            },
+        )
+        return self._draw("string", kwargs, observe=observe, forced=forced)
+
+    def draw_bytes(
+        self,
+        min_size: int = 0,
+        max_size: int = COLLECTION_DEFAULT_MAX_SIZE,
+        *,
+        forced: Optional[bytes] = None,
+        observe: bool = True,
+    ) -> bytes:
+        assert forced is None or min_size <= len(forced) <= max_size
+        assert min_size >= 0
+
+        kwargs: BytesKWargs = self._pooled_kwargs(
+            "bytes", {"min_size": min_size, "max_size": max_size}
+        )
+        return self._draw("bytes", kwargs, observe=observe, forced=forced)
+
+    def draw_boolean(
+        self,
+        p: float = 0.5,
+        *,
+        forced: Optional[bool] = None,
+        observe: bool = True,
+    ) -> bool:
+        assert (forced is not True) or p > 0
+        assert (forced is not False) or p < 1
+
+        kwargs: BooleanKWargs = self._pooled_kwargs("boolean", {"p": p})
+        return self._draw("boolean", kwargs, observe=observe, forced=forced)
+
+    def _pooled_kwargs(self, choice_type, kwargs):
+        """Memoize common dictionary objects to reduce memory pressure."""
+        # caching runs afoul of nondeterminism checks
+        if self.provider.avoid_realization:
+            return kwargs
+
+        key = (choice_type, *choice_kwargs_key(choice_type, kwargs))
+        try:
+            return POOLED_KWARGS_CACHE[key]
+        except KeyError:
+            POOLED_KWARGS_CACHE[key] = kwargs
+            return kwargs
+
+    def _pop_choice(
+        self,
+        choice_type: ChoiceTypeT,
+        kwargs: ChoiceKwargsT,
+        *,
+        forced: Optional[ChoiceT],
+    ) -> ChoiceT:
+        assert self.prefix is not None
+        # checked in _draw
+        assert self.index < len(self.prefix)
+
+        value = self.prefix[self.index]
+        if isinstance(value, ChoiceTemplate):
+            node: ChoiceTemplate = value
+            if node.count is not None:
+                assert node.count >= 0
+            # node templates have to be at the end for now, since it's not immediately
+            # apparent how to handle overruning a node template while generating a single
+            # node if the alternative is not "the entire data is an overrun".
+            assert self.index == len(self.prefix) - 1
+            if node.type == "simplest":
+                if forced is not None:
+                    choice = forced
+                elif isinstance(self.provider, HypothesisProvider):
+                    try:
+                        choice = choice_from_index(0, choice_type, kwargs)
+                    except ChoiceTooLarge:
+                        self.mark_overrun()
+                else:
+                    # give alternative backends control over ChoiceTemplate draws
+                    # as well
+                    choice = getattr(self.provider, f"draw_{choice_type}")(**kwargs)
+            else:
+                raise NotImplementedError
+
+            if node.count is not None:
+                node.count -= 1
+                if node.count < 0:
+                    self.mark_overrun()
+            return choice
+
+        choice = value
+        node_choice_type = {
+            str: "string",
+            float: "float",
+            int: "integer",
+            bool: "boolean",
+            bytes: "bytes",
+        }[type(choice)]
+        # If we're trying to:
+        # * draw a different ir type at the same location
+        # * draw the same ir type with a different kwargs, which does not permit
+        #   the current value
+        #
+        # then we call this a misalignment, because the choice sequence has
+        # slipped from what we expected at some point. An easy misalignment is
+        #
+        #   one_of(integers(0, 100), integers(101, 200))
+        #
+        # where the choice sequence [0, 100] has kwargs {min_value: 0, max_value: 100}
+        # at index 1, but [0, 101] has kwargs {min_value: 101, max_value: 200} at
+        # index 1 (which does not permit any of the values 0-100).
+        #
+        # When the choice sequence becomes misaligned, we generate a new value of the
+        # type and kwargs the strategy expects.
+        if node_choice_type != choice_type or not choice_permitted(choice, kwargs):
+            # only track first misalignment for now.
+            if self.misaligned_at is None:
+                self.misaligned_at = (self.index, choice_type, kwargs, forced)
+            try:
+                # Fill in any misalignments with index 0 choices. An alternative to
+                # this is using the index of the misaligned choice instead
+                # of index 0, which may be useful for maintaining
+                # "similarly-complex choices" in the shrinker. This requires
+                # attaching an index to every choice in ConjectureData.for_choices,
+                # which we don't always have (e.g. when reading from db).
+                #
+                # If we really wanted this in the future we could make this complexity
+                # optional, use it if present, and default to index 0 otherwise.
+                # This complicates our internal api and so I'd like to avoid it
+                # if possible.
+                #
+                # Additionally, I don't think slips which require
+                # slipping to high-complexity values are common. Though arguably
+                # we may want to expand a bit beyond *just* the simplest choice.
+                # (we could for example consider sampling choices from index 0-10).
+                choice = choice_from_index(0, choice_type, kwargs)
+            except ChoiceTooLarge:
+                # should really never happen with a 0-index choice, but let's be safe.
+                self.mark_overrun()
+
+        self.index += 1
+        return choice
 
     def as_result(self) -> Union[ConjectureResult, _Overrun]:
         """Convert the result of running this test into
@@ -882,20 +1047,26 @@ class ConjectureData:
             self.__result = ConjectureResult(
                 status=self.status,
                 interesting_origin=self.interesting_origin,
-                buffer=self.buffer,
-                examples=self.examples,
-                blocks=self.blocks,
+                spans=self.spans,
+                nodes=self.nodes,
+                length=self.length,
                 output=self.output,
-                extra_information=self.extra_information
-                if self.extra_information.has_information()
-                else None,
+                expected_traceback=self.expected_traceback,
+                expected_exception=self.expected_exception,
+                extra_information=(
+                    self.extra_information
+                    if self.extra_information.has_information()
+                    else None
+                ),
                 has_discards=self.has_discards,
                 target_observations=self.target_observations,
                 tags=frozenset(self.tags),
-                forced_indices=frozenset(self.forced_indices),
+                arg_slices=self.arg_slices,
+                slice_comments=self.slice_comments,
+                misaligned_at=self.misaligned_at,
+                cannot_proceed_scope=self.cannot_proceed_scope,
             )
             assert self.__result is not None
-            self.blocks.transfer_ownership(self.__result)
         return self.__result
 
     def __assert_not_frozen(self, name: str) -> None:
@@ -908,7 +1079,15 @@ class ConjectureData:
             value = repr(value)
         self.output += value
 
-    def draw(self, strategy: "SearchStrategy[Ex]", label: Optional[int] = None) -> "Ex":
+    def draw(
+        self,
+        strategy: "SearchStrategy[Ex]",
+        label: Optional[int] = None,
+        observe_as: Optional[str] = None,
+    ) -> "Ex":
+        from hypothesis.internal.observability import TESTCASE_CALLBACKS
+        from hypothesis.strategies._internal.utils import to_jsonable
+
         if self.is_find and not strategy.supports_find:
             raise InvalidArgument(
                 f"Cannot use strategy {strategy!r} within a call to find "
@@ -923,34 +1102,50 @@ class ConjectureData:
             # where we cache something expensive, this led to Flaky deadline errors!
             # See https://github.com/HypothesisWorks/hypothesis/issues/2108
             start_time = time.perf_counter()
+            gc_start_time = gc_cumulative_time()
 
         strategy.validate()
 
         if strategy.is_empty:
-            self.mark_invalid()
+            self.mark_invalid(f"empty strategy {self!r}")
 
         if self.depth >= MAX_DEPTH:
-            self.mark_invalid()
+            self.mark_invalid("max depth exceeded")
 
         if label is None:
             assert isinstance(strategy.label, int)
             label = strategy.label
-        self.start_example(label=label)
+        self.start_span(label=label)
         try:
             if not at_top_level:
                 return strategy.do_draw(self)
-            else:
-                assert start_time is not None
+            assert start_time is not None
+            key = observe_as or f"generate:unlabeled_{len(self.draw_times)}"
+            try:
                 strategy.validate()
                 try:
-                    return strategy.do_draw(self)
+                    v = strategy.do_draw(self)
                 finally:
-                    self.draw_times.append(time.perf_counter() - start_time)
+                    # Subtract the time spent in GC to avoid overcounting, as it is
+                    # accounted for at the overall example level.
+                    in_gctime = gc_cumulative_time() - gc_start_time
+                    self.draw_times[key] = time.perf_counter() - start_time - in_gctime
+            except Exception as err:
+                add_note(
+                    err,
+                    f"while generating {key.removeprefix('generate:')!r} from {strategy!r}",
+                )
+                raise
+            if TESTCASE_CALLBACKS:
+                avoid = self.provider.avoid_realization
+                self._observability_args[key] = to_jsonable(v, avoid_realization=avoid)
+            return v
         finally:
-            self.stop_example()
+            self.stop_span()
 
-    def start_example(self, label: int) -> None:
-        self.__assert_not_frozen("start_example")
+    def start_span(self, label: int) -> None:
+        self.provider.span_start(label)
+        self.__assert_not_frozen("start_span")
         self.depth += 1
         # Logically it would make sense for this to just be
         # ``self.depth = max(self.depth, self.max_depth)``, which is what it used to
@@ -960,17 +1155,18 @@ class ConjectureData:
         # to fix with this check.
         if self.depth > self.max_depth:
             self.max_depth = self.depth
-        self.__example_record.start_example(label)
+        self.__span_record.start_span(label)
         self.labels_for_structure_stack.append({label})
 
-    def stop_example(self, discard: bool = False) -> None:
+    def stop_span(self, *, discard: bool = False) -> None:
+        self.provider.span_end(discard)
         if self.frozen:
             return
         if discard:
             self.has_discards = True
         self.depth -= 1
         assert self.depth >= -1
-        self.__example_record.stop_example(discard)
+        self.__span_record.stop_span(discard=discard)
 
         labels_for_structure = self.labels_for_structure_stack.pop()
 
@@ -981,10 +1177,10 @@ class ConjectureData:
                 self.tags.update([structural_coverage(l) for l in labels_for_structure])
 
         if discard:
-            # Once we've discarded an example, every test case starting with
+            # Once we've discarded a span, every test case starting with
             # this prefix contains discards. We prune the tree at that point so
             # as to avoid future test cases bothering with this region, on the
-            # assumption that some example that you could have used instead
+            # assumption that some span that you could have used instead
             # there would *not* trigger the discard. This greatly speeds up
             # test case generation in some cases, because it allows us to
             # ignore large swathes of the search space that are effectively
@@ -1007,110 +1203,48 @@ class ConjectureData:
 
             self.observer.kill_branch()
 
-    def note_event(self, event: Hashable) -> None:
-        assert isinstance(self.events, set)
-        self.events.add(event)
-
     @property
-    def examples(self) -> Examples:
+    def spans(self) -> Spans:
         assert self.frozen
-        if self.__examples is None:
-            self.__examples = Examples(record=self.__example_record, blocks=self.blocks)
-        return self.__examples
+        if self.__spans is None:
+            self.__spans = Spans(record=self.__span_record)
+        return self.__spans
 
     def freeze(self) -> None:
         if self.frozen:
-            assert isinstance(self.buffer, bytes)
             return
         self.finish_time = time.perf_counter()
-        assert len(self.buffer) == self.index
+        self.gc_finish_time = gc_cumulative_time()
 
-        # Always finish by closing all remaining examples so that we have a
-        # valid tree.
+        # Always finish by closing all remaining spans so that we have a valid tree.
         while self.depth >= 0:
-            self.stop_example()
+            self.stop_span()
 
-        self.__example_record.freeze()
-
+        self.__span_record.freeze()
         self.frozen = True
-
-        self.buffer = bytes(self.buffer)
-        self.events = frozenset(self.events)
         self.observer.conclude_test(self.status, self.interesting_origin)
 
-    def draw_bits(self, n: int, *, forced: Optional[int] = None) -> int:
-        """Return an ``n``-bit integer from the underlying source of
-        bytes. If ``forced`` is set to an integer will instead
-        ignore the underlying source and simulate a draw as if it had
-        returned that integer."""
-        self.__assert_not_frozen("draw_bits")
-        if n == 0:
-            return 0
-        assert n > 0
-        n_bytes = bits_to_bytes(n)
-        self.__check_capacity(n_bytes)
-
-        if forced is not None:
-            buf = int_to_bytes(forced, n_bytes)
-        elif self.__bytes_drawn < len(self.__prefix):
-            index = self.__bytes_drawn
-            buf = self.__prefix[index : index + n_bytes]
-            if len(buf) < n_bytes:
-                assert self.__random is not None
-                buf += uniform(self.__random, n_bytes - len(buf))
-        else:
-            assert self.__random is not None
-            buf = uniform(self.__random, n_bytes)
-        buf = bytearray(buf)
-        self.__bytes_drawn += n_bytes
-
-        assert len(buf) == n_bytes
-
-        # If we have a number of bits that is not a multiple of 8
-        # we have to mask off the high bits.
-        buf[0] &= BYTE_MASKS[n % 8]
-        buf = bytes(buf)
-        result = int_from_bytes(buf)
-
-        self.observer.draw_bits(n, forced is not None, result)
-        self.__example_record.draw_bits(n, forced)
-
-        initial = self.index
-
-        assert isinstance(self.buffer, bytearray)
-        self.buffer.extend(buf)
-        self.index = len(self.buffer)
-
-        if forced is not None:
-            self.forced_indices.update(range(initial, self.index))
-
-        self.blocks.add_endpoint(self.index)
-
-        assert result.bit_length() <= n
-        return result
-
-    def draw_bytes(self, n: int) -> bytes:
-        """Draw n bytes from the underlying source."""
-        return int_to_bytes(self.draw_bits(8 * n), n)
-
-    def write(self, string: bytes) -> Optional[bytes]:
-        """Write ``string`` to the output buffer."""
-        self.__assert_not_frozen("write")
-        string = bytes(string)
-        if not string:
-            return None
-        self.draw_bits(len(string) * 8, forced=int_from_bytes(string))
-        return self.buffer[-len(string) :]
-
-    def __check_capacity(self, n: int) -> None:
-        if self.index + n > self.max_length:
-            self.mark_overrun()
+    def choice(
+        self,
+        values: Sequence[T],
+        *,
+        forced: Optional[T] = None,
+        observe: bool = True,
+    ) -> T:
+        forced_i = None if forced is None else values.index(forced)
+        i = self.draw_integer(
+            0,
+            len(values) - 1,
+            forced=forced_i,
+            observe=observe,
+        )
+        return values[i]
 
     def conclude_test(
         self,
         status: Status,
         interesting_origin: Optional[InterestingOrigin] = None,
-    ) -> None:
+    ) -> NoReturn:
         assert (interesting_origin is None) or (status == Status.INTERESTING)
         self.__assert_not_frozen("conclude_test")
         self.interesting_origin = interesting_origin
@@ -1120,18 +1254,18 @@ class ConjectureData:
 
     def mark_interesting(
         self, interesting_origin: Optional[InterestingOrigin] = None
-    ) -> None:
+    ) -> NoReturn:
         self.conclude_test(Status.INTERESTING, interesting_origin)
 
-    def mark_invalid(self):
+    def mark_invalid(self, why: Optional[str] = None) -> NoReturn:
+        if why is not None:
+            self.events["invalid because"] = why
         self.conclude_test(Status.INVALID)
 
-    def mark_overrun(self):
+    def mark_overrun(self) -> NoReturn:
         self.conclude_test(Status.OVERRUN)
 
 
-def bits_to_bytes(n: int) -> int:
-    """The number of bytes required to represent an n-bit number.
-    Equivalent to (n + 7) // 8, but slightly faster. This really is
-    called enough times that that matters."""
-    return (n + 7) >> 3
+def draw_choice(choice_type, kwargs, *, random):
+    cd = ConjectureData(random=random)
+    return getattr(cd.provider, f"draw_{choice_type}")(**kwargs)

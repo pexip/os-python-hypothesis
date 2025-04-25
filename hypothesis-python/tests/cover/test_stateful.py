@@ -8,19 +8,27 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-import base64
-import sys
+import re
 from collections import defaultdict
+from typing import ClassVar
 
 import pytest
 from _pytest.outcomes import Failed, Skipped
 from pytest import raises
 
-from hypothesis import __version__, reproduce_failure, seed, settings as Settings
+from hypothesis import (
+    HealthCheck,
+    Phase,
+    __version__,
+    reproduce_failure,
+    seed,
+    settings as Settings,
+    strategies as st,
+)
 from hypothesis.control import current_build_context
+from hypothesis.core import encode_failure
 from hypothesis.database import ExampleDatabase
 from hypothesis.errors import DidNotReproduce, Flaky, InvalidArgument, InvalidDefinition
-from hypothesis.internal.compat import PYPY
 from hypothesis.internal.entropy import deterministic_PRNG
 from hypothesis.stateful import (
     Bundle,
@@ -35,10 +43,15 @@ from hypothesis.stateful import (
 )
 from hypothesis.strategies import binary, data, integers, just, lists
 
-from tests.common.utils import capture_out, validate_deprecation
+from tests.common.utils import (
+    Why,
+    capture_out,
+    validate_deprecation,
+    xfail_on_crosshair,
+)
 from tests.nocover.test_stateful import DepthMachine
 
-NO_BLOB_SETTINGS = Settings(print_blob=False)
+NO_BLOB_SETTINGS = Settings(print_blob=False, phases=tuple(Phase)[:-1])
 
 
 class MultipleRulesSameFuncMachine(RuleBasedStateMachine):
@@ -108,6 +121,25 @@ def test_flaky_draw_less_raises_flaky():
         FlakyDrawLessMachine.TestCase().runTest()
 
 
+def test_result_is_added_to_target():
+    class TargetStateMachine(RuleBasedStateMachine):
+        nodes = Bundle("nodes")
+
+        @rule(target=nodes, source=lists(nodes))
+        def bunch(self, source):
+            assert len(source) == 0
+            return source
+
+    test_class = TargetStateMachine.TestCase
+    try:
+        test_class().runTest()
+        raise RuntimeError("Expected an assertion error")
+    except AssertionError as err:
+        notes = err.__notes__
+    regularized_notes = [re.sub(r"[0-9]+", "i", note) for note in notes]
+    assert "state.bunch(source=[nodes_i])" in regularized_notes
+
+
 class FlakyStateMachine(RuleBasedStateMachine):
     @rule()
     def action(self):
@@ -130,6 +162,11 @@ class FlakyRatchettingMachine(RuleBasedStateMachine):
         raise AssertionError
 
 
+@Settings(
+    stateful_step_count=10,
+    max_examples=30,
+    suppress_health_check=[HealthCheck.filter_too_much],
+)  # speed this up
 class MachineWithConsumingRule(RuleBasedStateMachine):
     b1 = Bundle("b1")
     b2 = Bundle("b2")
@@ -153,7 +190,7 @@ class MachineWithConsumingRule(RuleBasedStateMachine):
         self.consumed_counter += 1
         return consumed
 
-    @rule(consumed=lists(consumes(b1)))
+    @rule(consumed=lists(consumes(b1), max_size=3))
     def depopulate_b1_multiple(self, consumed):
         self.consumed_counter += len(consumed)
 
@@ -168,7 +205,8 @@ TestMachineWithConsumingRule = MachineWithConsumingRule.TestCase
 def test_multiple():
     none = multiple()
     some = multiple(1, 2.01, "3", b"4", 5)
-    assert len(none.values) == 0 and len(some.values) == 5
+    assert len(none.values) == 0
+    assert len(some.values) == 5
     assert set(some.values) == {1, 2.01, "3", b"4", 5}
 
 
@@ -217,12 +255,12 @@ def test_multiple_variables_printed():
     assignment_line = err.value.__notes__[2]
     # 'populate_bundle()' returns 2 values, so should be
     # expanded to 2 variables.
-    assert assignment_line == "v1, v2 = state.populate_bundle()"
+    assert assignment_line == "b_0, b_1 = state.populate_bundle()"
 
     # Make sure MultipleResult is iterable so the printed code is valid.
     # See https://github.com/HypothesisWorks/hypothesis/issues/2311
     state = ProducesMultiple()
-    v1, v2 = state.populate_bundle()
+    b_0, b_1 = state.populate_bundle()
     with raises(AssertionError):
         state.fail_fast()
 
@@ -244,7 +282,7 @@ def test_multiple_variables_printed_single_element():
         run_state_machine_as_test(ProducesMultiple)
 
     assignment_line = err.value.__notes__[2]
-    assert assignment_line == "(v1,) = state.populate_bundle()"
+    assert assignment_line == "(b_0,) = state.populate_bundle()"
 
     state = ProducesMultiple()
     (v1,) = state.populate_bundle()
@@ -306,23 +344,26 @@ def test_machine_with_no_terminals_is_invalid():
 
 
 def test_minimizes_errors_in_teardown():
-    counter = [0]
+    counter = 0
 
     class Foo(RuleBasedStateMachine):
         @initialize()
         def init(self):
-            counter[0] = 0
+            nonlocal counter
+            counter = 0
 
         @rule()
         def increment(self):
-            counter[0] += 1
+            nonlocal counter
+            counter += 1
 
         def teardown(self):
-            assert not counter[0]
+            nonlocal counter
+            assert not counter
 
     with raises(AssertionError):
         run_state_machine_as_test(Foo)
-    assert counter[0] == 1
+    assert counter == 1
 
 
 class RequiresInit(RuleBasedStateMachine):
@@ -394,10 +435,11 @@ def test_settings_attribute_is_validated():
 
 def test_saves_failing_example_in_database():
     db = ExampleDatabase(":memory:")
+    ss = Settings(
+        database=db, max_examples=1000, suppress_health_check=list(HealthCheck)
+    )
     with raises(AssertionError):
-        run_state_machine_as_test(
-            DepthMachine, settings=Settings(database=db, max_examples=100)
-        )
+        run_state_machine_as_test(DepthMachine, settings=ss)
     assert any(list(db.data.values()))
 
 
@@ -426,7 +468,7 @@ def test_can_explicitly_call_functions_when_precondition_not_satisfied():
         @precondition(lambda self: False)
         @rule()
         def test_blah(self):
-            raise ValueError()
+            raise ValueError
 
         @rule()
         def test_foo(self):
@@ -445,7 +487,7 @@ def test_invariant():
 
         @invariant()
         def test_blah(self):
-            raise ValueError()
+            raise ValueError
 
         @rule()
         def do_stuff(self):
@@ -487,12 +529,12 @@ def test_invariant_precondition():
         @invariant()
         @precondition(lambda _: False)
         def an_invariant(self):
-            raise ValueError()
+            raise ValueError
 
         @precondition(lambda _: False)
         @invariant()
         def another_invariant(self):
-            raise ValueError()
+            raise ValueError
 
         @rule()
         def do_stuff(self):
@@ -562,7 +604,7 @@ def test_multiple_invariants():
         @precondition(lambda self: self.first_invariant_ran)
         @invariant()
         def invariant_2(self):
-            raise ValueError()
+            raise ValueError
 
         @rule()
         def do_stuff(self):
@@ -583,7 +625,7 @@ def test_explicit_invariant_call_with_precondition():
         @precondition(lambda self: False)
         @invariant()
         def test_blah(self):
-            raise ValueError()
+            raise ValueError
 
         @rule()
         def test_foo(self):
@@ -604,7 +646,7 @@ def test_invariant_checks_initial_state_if_no_initialize_rules():
         @invariant()
         def test_blah(self):
             if self.num == 0:
-                raise ValueError()
+                raise ValueError
 
         @rule()
         def test_foo(self):
@@ -623,7 +665,7 @@ def test_invariant_failling_present_in_falsifying_example():
 
         @invariant()
         def invariant_1(self):
-            raise ValueError()
+            raise ValueError
 
         @rule()
         def rule_1(self):
@@ -646,7 +688,7 @@ state.teardown()
 
 
 def test_invariant_present_in_falsifying_example():
-    @Settings(print_blob=False)
+    @Settings(print_blob=False, phases=tuple(Phase)[:-1])
     class BadRuleWithGoodInvariants(RuleBasedStateMachine):
         def __init__(self):
             super().__init__()
@@ -673,12 +715,12 @@ def test_invariant_present_in_falsifying_example():
         def rule_1(self):
             self.num += 1
             if self.num == 2:
-                raise ValueError()
+                raise ValueError
 
     with pytest.raises(ValueError) as err:
         run_state_machine_as_test(BadRuleWithGoodInvariants)
 
-    expected = """\
+    expected = """
 Falsifying example:
 state = BadRuleWithGoodInvariants()
 state.invariant_1()
@@ -690,18 +732,10 @@ state.invariant_1()
 state.invariant_2()
 state.invariant_3()
 state.rule_1()
-state.teardown()"""
+state.teardown()
+""".strip()
 
-    if PYPY or sys.gettrace():  # explain mode disabled in these cases
-        result = "\n".join(err.value.__notes__)
-    else:
-        # Non-PyPy runs include explain mode, but we skip the final line because
-        # it includes the absolute path, which of course varies between machines.
-        expected += """
-Explanation:
-    These lines were always and only run by failing examples:"""
-        result = "\n".join(err.value.__notes__[:-1])
-
+    result = "\n".join(err.value.__notes__).strip()
     assert expected == result
 
 
@@ -773,7 +807,7 @@ def test_removes_needless_steps():
 
 
 def test_prints_equal_values_with_correct_variable_name():
-    @Settings(max_examples=100)
+    @Settings(max_examples=100, suppress_health_check=list(HealthCheck))
     class MovesBetweenBundles(RuleBasedStateMachine):
         b1 = Bundle("b1")
         b2 = Bundle("b2")
@@ -796,15 +830,15 @@ def test_prints_equal_values_with_correct_variable_name():
     result = "\n".join(err.value.__notes__)
     for m in ["create", "transfer", "fail"]:
         assert result.count("state." + m) == 1
-    assert "v1 = state.create()" in result
-    assert "v2 = state.transfer(source=v1)" in result
-    assert "state.fail(source=v2)" in result
+    assert "b1_0 = state.create()" in result
+    assert "b2_0 = state.transfer(source=b1_0)" in result
+    assert "state.fail(source=b2_0)" in result
 
 
 def test_initialize_rule():
     @Settings(max_examples=1000)
     class WithInitializeRules(RuleBasedStateMachine):
-        initialized = []
+        initialized: ClassVar = []
 
         @initialize()
         def initialize_a(self):
@@ -844,7 +878,7 @@ def test_initialize_rule_populate_bundle():
 
         @initialize(target=a, dep=just("dep"))
         def initialize_a(self, dep):
-            return f"a v1 with ({dep})"
+            return f"a a_0 with ({dep})"
 
         @rule(param=a)
         def fail_fast(self, param):
@@ -860,8 +894,8 @@ def test_initialize_rule_populate_bundle():
         == """
 Falsifying example:
 state = WithInitializeBundleRules()
-v1 = state.initialize_a(dep='dep')
-state.fail_fast(param=v1)
+a_0 = state.initialize_a(dep='dep')
+state.fail_fast(param=a_0)
 state.teardown()
 """.strip()
     )
@@ -917,7 +951,7 @@ def test_initialize_rule_cannot_be_double_applied():
 
 def test_initialize_rule_in_state_machine_with_inheritance():
     class ParentStateMachine(RuleBasedStateMachine):
-        initialized = []
+        initialized: ClassVar = []
 
         @initialize()
         def initialize_a(self):
@@ -981,7 +1015,7 @@ def test_steps_printed_despite_pytest_fail():
     class RaisesProblem(RuleBasedStateMachine):
         @rule()
         def oops(self):
-            pytest.fail()
+            pytest.fail("note that this raises a BaseException")
 
     with pytest.raises(Failed) as err:
         run_state_machine_as_test(RaisesProblem)
@@ -1045,7 +1079,7 @@ def test_uses_seed(capsys):
 
 
 def test_reproduce_failure_works():
-    @reproduce_failure(__version__, base64.b64encode(b"\x00\x00\x01\x00\x00\x00"))
+    @reproduce_failure(__version__, encode_failure([False, 0, True]))
     class TrivialMachine(RuleBasedStateMachine):
         @rule()
         def oops(self):
@@ -1056,7 +1090,7 @@ def test_reproduce_failure_works():
 
 
 def test_reproduce_failure_fails_if_no_error():
-    @reproduce_failure(__version__, base64.b64encode(b"\x00\x00\x01\x00\x00\x00"))
+    @reproduce_failure(__version__, encode_failure([False, 0, True]))
     class TrivialMachine(RuleBasedStateMachine):
         @rule()
         def ok(self):
@@ -1086,66 +1120,8 @@ def test_arguments_do_not_use_names_of_return_values():
 
     with pytest.raises(AssertionError) as err:
         run_state_machine_as_test(TrickyPrintingMachine)
-    assert "v1 = state.init_data(value=0)" in err.value.__notes__
-    assert "v1 = state.init_data(value=v1)" not in err.value.__notes__
-
-
-def test_multiple_precondition_bug():
-    # See https://github.com/HypothesisWorks/hypothesis/issues/2861
-    class MultiplePreconditionMachine(RuleBasedStateMachine):
-        @rule(x=integers())
-        def good_method(self, x):
-            pass
-
-        @precondition(lambda self: True)
-        @precondition(lambda self: False)
-        @rule(x=integers())
-        def bad_method_a(self, x):
-            raise AssertionError("This rule runs, even though it shouldn't.")
-
-        @precondition(lambda self: False)
-        @precondition(lambda self: True)
-        @rule(x=integers())
-        def bad_method_b(self, x):
-            raise AssertionError("This rule might be skipped for the wrong reason.")
-
-        @precondition(lambda self: True)
-        @rule(x=integers())
-        @precondition(lambda self: False)
-        def bad_method_c(self, x):
-            raise AssertionError("This rule runs, even though it shouldn't.")
-
-        @rule(x=integers())
-        @precondition(lambda self: True)
-        @precondition(lambda self: False)
-        def bad_method_d(self, x):
-            raise AssertionError("This rule runs, even though it shouldn't.")
-
-        @precondition(lambda self: True)
-        @precondition(lambda self: False)
-        @invariant()
-        def bad_invariant_a(self):
-            raise AssertionError("This invariant runs, even though it shouldn't.")
-
-        @precondition(lambda self: False)
-        @precondition(lambda self: True)
-        @invariant()
-        def bad_invariant_b(self):
-            raise AssertionError("This invariant runs, even though it shouldn't.")
-
-        @precondition(lambda self: True)
-        @invariant()
-        @precondition(lambda self: False)
-        def bad_invariant_c(self):
-            raise AssertionError("This invariant runs, even though it shouldn't.")
-
-        @invariant()
-        @precondition(lambda self: True)
-        @precondition(lambda self: False)
-        def bad_invariant_d(self):
-            raise AssertionError("This invariant runs, even though it shouldn't.")
-
-    run_state_machine_as_test(MultiplePreconditionMachine)
+    assert "data_0 = state.init_data(value=0)" in err.value.__notes__
+    assert "data_0 = state.init_data(value=data_0)" not in err.value.__notes__
 
 
 class TrickyInitMachine(RuleBasedStateMachine):
@@ -1192,3 +1168,213 @@ def test_deprecated_target_consumes_bundle():
     # definition-time already anyway, so it's not *worse* than the status quo.
     with validate_deprecation():
         rule(target=consumes(Bundle("b")))
+
+
+@Settings(stateful_step_count=5)
+class MinStepsMachine(RuleBasedStateMachine):
+    @initialize()
+    def init_a(self):
+        self.a = 0
+
+    @rule()
+    def inc(self):
+        self.a += 1
+
+    @invariant()
+    def not_too_many_steps(self):
+        assert self.a < 10
+
+    def teardown(self):
+        assert self.a >= 2
+
+
+# Replay overruns after we trigger a crosshair.util.IgnoreAttempt exception for n=3
+@xfail_on_crosshair(Why.other)
+def test_min_steps_argument():
+    # You must pass a non-negative integer...
+    for n_steps in (-1, "nan", 5.0):
+        with pytest.raises(InvalidArgument):
+            run_state_machine_as_test(MinStepsMachine, _min_steps=n_steps)
+
+    # and if you do, we'll take at least that many steps
+    run_state_machine_as_test(MinStepsMachine, _min_steps=3)
+
+    # (oh, and it's OK if you ask for more than we're actually going to take)
+    run_state_machine_as_test(MinStepsMachine, _min_steps=20)
+
+
+class ErrorsOnClassAttributeSettings(RuleBasedStateMachine):
+    settings = Settings(derandomize=True)
+
+    @rule()
+    def step(self):
+        pass
+
+
+def test_fails_on_settings_class_attribute():
+    with pytest.raises(
+        InvalidDefinition,
+        match="Assigning .+ as a class attribute does nothing",
+    ):
+        run_state_machine_as_test(ErrorsOnClassAttributeSettings)
+
+
+def test_single_target_multiple():
+    class Machine(RuleBasedStateMachine):
+        a = Bundle("a")
+
+        @initialize(target=a)
+        def initialize(self):
+            return multiple("ret1", "ret2", "ret3")
+
+        @rule(param=a)
+        def fail_fast(self, param):
+            raise AssertionError
+
+    Machine.TestCase.settings = NO_BLOB_SETTINGS
+    with pytest.raises(AssertionError) as err:
+        run_state_machine_as_test(Machine)
+
+    result = "\n".join(err.value.__notes__)
+    assert (
+        result
+        == """
+Falsifying example:
+state = Machine()
+a_0, a_1, a_2 = state.initialize()
+state.fail_fast(param=a_2)
+state.teardown()
+""".strip()
+    )
+
+
+def test_multiple_targets():
+    class Machine(RuleBasedStateMachine):
+        a = Bundle("a")
+        b = Bundle("b")
+
+        @initialize(targets=(a, b))
+        def initialize(self):
+            return multiple("ret1", "ret2", "ret3")
+
+        @rule(
+            a1=consumes(a),
+            a2=consumes(a),
+            a3=consumes(a),
+            b1=consumes(b),
+            b2=consumes(b),
+            b3=consumes(b),
+        )
+        def fail_fast(self, a1, a2, a3, b1, b2, b3):
+            raise AssertionError
+
+    Machine.TestCase.settings = NO_BLOB_SETTINGS
+    with pytest.raises(AssertionError) as err:
+        run_state_machine_as_test(Machine)
+
+    result = "\n".join(err.value.__notes__)
+    assert (
+        result
+        == """
+Falsifying example:
+state = Machine()
+a_0, b_0, a_1, b_1, a_2, b_2 = state.initialize()
+state.fail_fast(a1=a_2, a2=a_1, a3=a_0, b1=b_2, b2=b_1, b3=b_0)
+state.teardown()
+""".strip()
+    )
+
+
+@xfail_on_crosshair(Why.undiscovered)
+def test_multiple_common_targets():
+    class Machine(RuleBasedStateMachine):
+        a = Bundle("a")
+        b = Bundle("b")
+
+        @initialize(targets=(a, b, a))
+        def initialize(self):
+            return multiple("ret1", "ret2", "ret3")
+
+        @rule(
+            a1=consumes(a),
+            a2=consumes(a),
+            a3=consumes(a),
+            a4=consumes(a),
+            a5=consumes(a),
+            a6=consumes(a),
+            b1=consumes(b),
+            b2=consumes(b),
+            b3=consumes(b),
+        )
+        def fail_fast(self, a1, a2, a3, a4, a5, a6, b1, b2, b3):
+            raise AssertionError
+
+    Machine.TestCase.settings = NO_BLOB_SETTINGS
+    with pytest.raises(AssertionError) as err:
+        run_state_machine_as_test(Machine)
+
+    result = "\n".join(err.value.__notes__)
+    assert (
+        result
+        == """
+Falsifying example:
+state = Machine()
+a_0, b_0, a_1, a_2, b_1, a_3, a_4, b_2, a_5 = state.initialize()
+state.fail_fast(a1=a_5, a2=a_4, a3=a_3, a4=a_2, a5=a_1, a6=a_0, b1=b_2, b2=b_1, b3=b_0)
+state.teardown()
+""".strip()
+    )
+
+
+class LotsOfEntropyPerStepMachine(RuleBasedStateMachine):
+    # Regression tests for https://github.com/HypothesisWorks/hypothesis/issues/3618
+    @rule(data=binary(min_size=512, max_size=512))
+    def rule1(self, data):
+        assert data
+
+
+@pytest.mark.skipif(Settings._current_profile == "crosshair", reason="takes hours")
+def test_lots_of_entropy():
+    run_state_machine_as_test(LotsOfEntropyPerStepMachine)
+
+
+def test_flatmap():
+    class Machine(RuleBasedStateMachine):
+        buns = Bundle("buns")
+
+        @initialize(target=buns)
+        def create_bun(self):
+            return 0
+
+        @rule(target=buns, bun=buns.flatmap(lambda x: just(x + 1)))
+        def use_flatmap(self, bun):
+            assert isinstance(bun, int)
+            return bun
+
+        @rule(bun=buns)
+        def use_directly(self, bun):
+            assert isinstance(bun, int)
+
+    Machine.TestCase.settings = Settings(stateful_step_count=5, max_examples=10)
+    run_state_machine_as_test(Machine)
+
+
+def test_use_bundle_within_other_strategies():
+    class Class:
+        def __init__(self, value):
+            self.value = value
+
+    class Machine(RuleBasedStateMachine):
+        my_bundle = Bundle("my_bundle")
+
+        @initialize(target=my_bundle)
+        def set_initial(self, /) -> str:
+            return "sample text"
+
+        @rule(instance=st.builds(Class, my_bundle))
+        def check(self, instance):
+            assert isinstance(instance, Class)
+            assert isinstance(instance.value, str)
+
+    Machine.TestCase.settings = Settings(stateful_step_count=5, max_examples=10)
+    run_state_machine_as_test(Machine)

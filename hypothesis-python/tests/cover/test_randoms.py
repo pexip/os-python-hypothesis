@@ -15,7 +15,7 @@ from copy import copy
 
 import pytest
 
-from hypothesis import assume, given, strategies as st
+from hypothesis import HealthCheck, assume, given, settings, strategies as st
 from hypothesis.internal.compat import ExceptionGroup
 from hypothesis.strategies._internal.random import (
     RANDOM_METHODS,
@@ -25,7 +25,8 @@ from hypothesis.strategies._internal.random import (
     normalize_zero,
 )
 
-from tests.common.debug import find_any
+from tests.common.debug import assert_all_examples, find_any
+from tests.common.utils import Why, xfail_on_crosshair
 
 
 def test_implements_all_random_methods():
@@ -36,7 +37,7 @@ def test_implements_all_random_methods():
                 assert f.__module__ == "hypothesis.strategies._internal.random", name
 
 
-any_random = st.booleans().flatmap(lambda i: st.randoms(use_true_random=i))
+any_random = st.randoms(use_true_random=False) | st.randoms(use_true_random=True)
 
 beta_param = st.floats(0.01, 1000)
 seq_param = st.lists(st.integers(), min_size=1)
@@ -124,7 +125,7 @@ def any_call_of_method(draw, method):
 @st.composite
 def any_call(draw):
     method = draw(st.sampled_from(RANDOM_METHODS))
-    return (method,) + draw(any_call_of_method(method))
+    return (method, *draw(any_call_of_method(method)))
 
 
 @pytest.mark.parametrize("method", RANDOM_METHODS)
@@ -153,16 +154,20 @@ def test_multiple_randoms_are_unrelated():
         test()
 
 
-@given(any_random, any_random)
-def test_randoms_can_be_synced(r1, r2):
-    assume(type(r1) is type(r2))
+@pytest.mark.parametrize("use_true_random", [False, True])
+@given(data=st.data())
+def test_randoms_can_be_synced(use_true_random, data):
+    r1 = data.draw(st.randoms(use_true_random=use_true_random))
+    r2 = data.draw(st.randoms(use_true_random=use_true_random))
     r2.setstate(r1.getstate())
     assert r1.random() == r2.random()
 
 
-@given(any_random, any_random, any_call())
-def test_seeding_to_same_value_synchronizes(r1, r2, method_call):
-    assume(type(r1) is type(r2))
+@pytest.mark.parametrize("use_true_random", [False, True])
+@given(data=st.data(), method_call=any_call())
+def test_seeding_to_same_value_synchronizes(use_true_random, data, method_call):
+    r1 = data.draw(st.randoms(use_true_random=use_true_random))
+    r2 = data.draw(st.randoms(use_true_random=use_true_random))
     method, args, kwargs = method_call
     r1.seed(0)
     r2.seed(0)
@@ -176,6 +181,7 @@ def test_copying_synchronizes(r1, method_call):
     assert getattr(r1, method)(*args, **kwargs) == getattr(r2, method)(*args, **kwargs)
 
 
+@xfail_on_crosshair(Why.symbolic_outside_context, strict=False)
 @pytest.mark.parametrize("use_true_random", [True, False])
 def test_seeding_to_different_values_does_not_synchronize(use_true_random):
     @given(
@@ -191,6 +197,7 @@ def test_seeding_to_different_values_does_not_synchronize(use_true_random):
         test()
 
 
+@xfail_on_crosshair(Why.symbolic_outside_context, strict=False)
 @pytest.mark.parametrize("use_true_random", [True, False])
 def test_unrelated_calls_desynchronizes(use_true_random):
     @given(
@@ -290,6 +297,7 @@ def test_invalid_sample():
 
 
 def test_triangular_modes():
+    @settings(report_multiple_bugs=True)
     @given(st.randoms(use_true_random=False))
     def test(rnd):
         x = rnd.triangular(0.0, 1.0, mode=0.5)
@@ -306,10 +314,6 @@ def test_samples_have_right_length(rnd, sample):
     assert len(rnd.sample(seq, k)) == k
 
 
-@pytest.mark.skipif(
-    "choices" not in RANDOM_METHODS,
-    reason="choices not supported on this Python version",
-)
 @given(st.randoms(use_true_random=False), any_call_of_method("choices"))
 def test_choices_have_right_length(rnd, choices):
     args, kwargs = choices
@@ -319,15 +323,12 @@ def test_choices_have_right_length(rnd, choices):
     assert len(rnd.choices(seq, k=k)) == k
 
 
-@pytest.mark.skipif(
-    "randbytes" not in RANDOM_METHODS,
-    reason="randbytes not supported on this Python version",
-)
 @given(any_random, st.integers(0, 100))
 def test_randbytes_have_right_length(rnd, n):
     assert len(rnd.randbytes(n)) == n
 
 
+@pytest.mark.skipif(settings._current_profile == "crosshair", reason="takes hours")
 @given(any_random)
 def test_can_manage_very_long_ranges_with_step(rnd):
     i = rnd.randrange(0, 2**256, 3)
@@ -337,6 +338,7 @@ def test_can_manage_very_long_ranges_with_step(rnd):
     assert i in range(0, 2**256, 3)
 
 
+@settings(suppress_health_check=[HealthCheck.too_slow])
 @given(any_random, st.data())
 def test_range_with_arbitrary_step_is_in_range(rnd, data):
     endpoints = st.integers(-100, 100)
@@ -377,3 +379,26 @@ def test_can_sample_from_large_subset(rnd):
     ys = rnd.sample(xs, n)
     assert set(ys).issubset(set(xs))
     assert len(ys) == len(set(ys)) == n
+
+
+@given(st.randoms(use_true_random=False))
+def test_can_draw_empty_from_empty_sequence(rnd):
+    assert rnd.sample([], 0) == []
+
+
+def test_random_includes_zero_excludes_one():
+    strat = st.randoms(use_true_random=False).map(lambda r: r.random())
+    assert_all_examples(strat, lambda x: 0 <= x < 1)
+    find_any(strat, lambda x: x == 0)
+
+
+def test_betavariate_includes_zero_and_one():
+    # https://github.com/HypothesisWorks/hypothesis/issues/4297#issuecomment-2720144709
+    strat = st.randoms(use_true_random=False).flatmap(
+        lambda r: st.builds(
+            r.betavariate, alpha=st.just(1.0) | beta_param, beta=beta_param
+        )
+    )
+    assert_all_examples(strat, lambda x: 0 <= x <= 1)
+    find_any(strat, lambda x: x == 0)
+    find_any(strat, lambda x: x == 1)

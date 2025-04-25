@@ -9,14 +9,14 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 from inspect import signature
-from typing import List, get_type_hints
+from typing import Optional, get_type_hints
 
 from hypothesis import given, strategies as st
 
 from tests.common.debug import find_any
 
 
-def use_this_signature(self, a: int, b: bool = None, *, x: float, y: str):
+def use_this_signature(self, a: int, b: Optional[list] = None, *, x: float, y: str):
     pass
 
 
@@ -43,7 +43,7 @@ class ModelForFromType(Model):
     def __init__(self, **kwargs):
         assert set(kwargs) == {"a", "b", "x", "y"}
         self.b = kwargs["b"]
-        assert self.b is None or isinstance(self.b, bool)
+        assert self.b is None or isinstance(self.b, list)
 
 
 @given(st.from_type(ModelForFromType))
@@ -53,17 +53,17 @@ def test_from_type_uses_signature_attribute(val):
 
 def test_from_type_can_be_default_or_annotation():
     find_any(st.from_type(ModelForFromType), lambda m: m.b is None)
-    find_any(st.from_type(ModelForFromType), lambda m: isinstance(m.b, bool))
+    find_any(st.from_type(ModelForFromType), lambda m: isinstance(m.b, list))
 
 
 def use_annotations(
-    self, test_a: int, test_b: str = None, *, test_x: float, test_y: str
+    self, test_a: int, test_b: Optional[str] = None, *, test_x: float, test_y: str
 ):
     pass
 
 
 def use_signature(
-    self, testA: int, testB: str = None, *, testX: float, testY: List[str]
+    self, testA: int, testB: Optional[str] = None, *, testX: float, testY: list[str]
 ):
     pass
 
@@ -105,7 +105,7 @@ def test_build_with_non_types_in_signature(val):
 
 
 class UnconventionalSignature:
-    def __init__(x: int = 0, self: bool = True):  # noqa: B902
+    def __init__(x: int = 0, self: bool = True):  # noqa
         assert not isinstance(x, int)
         x.self = self
 

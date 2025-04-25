@@ -11,6 +11,8 @@
 from bisect import bisect_right, insort
 from collections import Counter
 
+import attr
+
 from hypothesis.errors import InvalidState
 from hypothesis.internal.conjecture.dfa import DFA, cached
 from hypothesis.internal.conjecture.junkdrawer import (
@@ -78,8 +80,6 @@ learning languages offline that we can record for later use.
 
 """
 
-import attr
-
 
 @attr.s(slots=True)
 class DistinguishedState:
@@ -87,25 +87,25 @@ class DistinguishedState:
     distinct from ones we have previously seen so far."""
 
     # Index of this state in the learner's list of states
-    index = attr.ib()
+    index: int = attr.ib()
 
     # A string that witnesses this state (i.e. when starting from the origin
     # and following this string you will end up in this state).
-    label = attr.ib()
+    label: str = attr.ib()
 
     # A boolean as to whether this is an accepting state.
-    accepting = attr.ib()
+    accepting: bool = attr.ib()
 
     # A list of experiments that it is necessary to run to determine whether
     # a string is in this state. This is stored as a dict mapping experiments
     # to their expected result. A string is only considered to lead to this
     # state if ``all(learner.member(s + experiment) == result for experiment,
     # result in self.experiments.items())``.
-    experiments = attr.ib()
+    experiments: dict = attr.ib()
 
     # A cache of transitions out of this state, mapping bytes to the states
     # that they lead to.
-    transitions = attr.ib(default=attr.Factory(dict))
+    transitions: dict = attr.ib(factory=dict)
 
 
 class LStar:

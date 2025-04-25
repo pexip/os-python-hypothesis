@@ -1,6 +1,6 @@
-=================
-Quick start guide
-=================
+==========
+Quickstart
+==========
 
 This document should talk you through everything you need to get started with
 Hypothesis.
@@ -112,7 +112,7 @@ explicitly by using the :obj:`@example <hypothesis.example>` decorator:
 This can be useful to show other developers (or your future self) what kinds
 of data are valid inputs, or to ensure that particular edge cases such as
 ``""`` are tested every time.  It's also great for regression tests because
-although Hypothesis will :doc:`remember failing examples <database>`,
+although Hypothesis will :ref:`remember failing examples <database>`,
 we don't recommend distributing that database.
 
 It's also worth noting that both :obj:`@example <hypothesis.example>` and

@@ -53,16 +53,16 @@ class DFA:
     @property
     def start(self):
         """Returns the starting state."""
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def is_accepting(self, i):
         """Returns if state ``i`` is an accepting one."""
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def transition(self, i, c):
         """Returns the state that i transitions to on reading
         character c from a string."""
-        raise NotImplementedError()
+        raise NotImplementedError
 
     @property
     def alphabet(self):
@@ -541,7 +541,7 @@ class DFA:
 
         alphabet = sorted(set(self.alphabet) | set(other.alphabet))
 
-        queue = deque([((self.start, other.start))])
+        queue = deque([(self.start, other.start)])
         while queue:
             self_state, other_state = queue.popleft()
 

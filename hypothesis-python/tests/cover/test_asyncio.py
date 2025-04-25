@@ -9,7 +9,6 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import asyncio
-import sys
 import warnings
 from unittest import TestCase
 
@@ -18,14 +17,13 @@ import pytest
 from hypothesis import assume, given, strategies as st
 from hypothesis.internal.compat import PYPY
 
-if sys.version_info < (3, 8):
-    coro_decorator = asyncio.coroutine
-else:
+from tests.common.utils import skipif_emscripten
 
-    def coro_decorator(f):
-        with warnings.catch_warnings():
-            warnings.simplefilter(action="ignore", category=DeprecationWarning)
-            return asyncio.coroutine(f)
+
+def coro_decorator(f):
+    with warnings.catch_warnings():
+        warnings.simplefilter(action="ignore", category=DeprecationWarning)
+        return asyncio.coroutine(f)
 
 
 class TestAsyncio(TestCase):
@@ -66,12 +64,24 @@ class TestAsyncio(TestCase):
 
 
 class TestAsyncioRun(TestCase):
+    # In principle, these tests could indeed run on emscripten if we grab the existing
+    # event loop and run them there.  However, that seems to have hit an infinite loop
+    # and so we're just skipping them for now and will revisit later.
+
     def execute_example(self, f):
         asyncio.run(f())
 
+    @skipif_emscripten
     @given(x=st.text())
     @coro_decorator
-    def test_foo(self, x):
+    def test_foo_yield_from(self, x):
         assume(x)
         yield from asyncio.sleep(0.001)
+        assert x
+
+    @skipif_emscripten
+    @given(st.text())
+    async def test_foo_await(self, x):
+        assume(x)
+        await asyncio.sleep(0.001)
         assert x

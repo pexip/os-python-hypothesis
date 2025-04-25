@@ -9,6 +9,7 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import datetime
+import os
 import subprocess
 import sys
 from unittest import TestCase
@@ -17,6 +18,7 @@ import pytest
 
 from hypothesis import example, given, strategies as st
 from hypothesis._settings import (
+    HealthCheck,
     Phase,
     Verbosity,
     default_variable,
@@ -24,7 +26,7 @@ from hypothesis._settings import (
     note_deprecation,
     settings,
 )
-from hypothesis.database import ExampleDatabase
+from hypothesis.database import ExampleDatabase, InMemoryExampleDatabase
 from hypothesis.errors import (
     HypothesisDeprecationWarning,
     InvalidArgument,
@@ -33,7 +35,13 @@ from hypothesis.errors import (
 from hypothesis.stateful import RuleBasedStateMachine, rule
 from hypothesis.utils.conventions import not_set
 
-from tests.common.utils import counts_calls, fails_with
+from tests.common.utils import (
+    checks_deprecated_behaviour,
+    counts_calls,
+    fails_with,
+    skipif_emscripten,
+    validate_deprecation,
+)
 
 
 def test_has_docstrings():
@@ -101,12 +109,13 @@ def test_can_not_set_verbosity_to_non_verbosity():
 
 @pytest.mark.parametrize("db", [None, ExampleDatabase()])
 def test_inherits_an_empty_database(db):
-    assert settings.default.database is not None
-    s = settings(database=db)
-    assert s.database is db
-    with local_settings(s):
-        t = settings()
-    assert t.database is db
+    with local_settings(settings(database=InMemoryExampleDatabase())):
+        assert settings.default.database is not None
+        s = settings(database=db)
+        assert s.database is db
+        with local_settings(s):
+            t = settings()
+        assert t.database is db
 
 
 @pytest.mark.parametrize("db", [None, ExampleDatabase()])
@@ -198,7 +207,7 @@ def test_database_type_must_be_ExampleDatabase(db, bad_db):
 
 def test_cannot_define_settings_once_locked():
     with pytest.raises(InvalidState):
-        settings._define_setting("hi", "there", 4)
+        settings._define_setting("hi", "there", default=4)
 
 
 def test_cannot_assign_default():
@@ -223,13 +232,13 @@ def test_settings_alone():
 """
 
 
-def test_settings_alone(testdir):
-    script = testdir.makepyfile(TEST_SETTINGS_ALONE)
-    result = testdir.runpytest(script)
+def test_settings_alone(pytester):
+    # Disable cacheprovider, since we don't need it and it's flaky on pyodide
+    script = pytester.makepyfile(TEST_SETTINGS_ALONE)
+    result = pytester.runpytest_inprocess(script, "-p", "no:cacheprovider")
     out = "\n".join(result.stdout.lines)
-    assert (
-        "Using `@settings` on a test without `@given` is completely pointless." in out
-    )
+    msg = "Using `@settings` on a test without `@given` is completely pointless."
+    assert msg in out
     assert "InvalidArgument" in out
     assert result.ret == 1
 
@@ -266,6 +275,7 @@ from hypothesis import settings
 from hypothesis.configuration import set_hypothesis_home_dir
 from hypothesis.database import DirectoryBasedExampleDatabase
 
+settings.load_profile("default")
 settings.default.database
 
 if __name__ == '__main__':
@@ -273,14 +283,14 @@ if __name__ == '__main__':
     set_hypothesis_home_dir(new_home)
     db = settings.default.database
     assert isinstance(db, DirectoryBasedExampleDatabase), db
-    assert db.path.startswith(new_home), (db.path, new_home)
+    assert db.path.is_relative_to(new_home), (db.path, new_home)
 """
 
 
-def test_puts_the_database_in_the_home_dir_by_default(tmpdir):
-    script = tmpdir.join("assertlocation.py")
-    script.write(ASSERT_DATABASE_PATH)
-
+@skipif_emscripten
+def test_puts_the_database_in_the_home_dir_by_default(tmp_path):
+    script = tmp_path / "assertlocation.py"
+    script.write_text(ASSERT_DATABASE_PATH, encoding="utf-8")
     subprocess.check_call([sys.executable, str(script)])
 
 
@@ -339,19 +349,25 @@ def test_deadline_given_none():
 def test_deadline_given_valid_int():
     x = settings(deadline=1000).deadline
     assert isinstance(x, datetime.timedelta)
-    assert x.days == 0 and x.seconds == 1 and x.microseconds == 0
+    assert x.days == 0
+    assert x.seconds == 1
+    assert x.microseconds == 0
 
 
 def test_deadline_given_valid_float():
     x = settings(deadline=2050.25).deadline
     assert isinstance(x, datetime.timedelta)
-    assert x.days == 0 and x.seconds == 2 and x.microseconds == 50250
+    assert x.days == 0
+    assert x.seconds == 2
+    assert x.microseconds == 50250
 
 
 def test_deadline_given_valid_timedelta():
     x = settings(deadline=datetime.timedelta(days=1, microseconds=15030000)).deadline
     assert isinstance(x, datetime.timedelta)
-    assert x.days == 1 and x.seconds == 15 and x.microseconds == 30000
+    assert x.days == 1
+    assert x.seconds == 15
+    assert x.microseconds == 30000
 
 
 @pytest.mark.parametrize(
@@ -414,13 +430,12 @@ def test_settings_decorator_applied_to_non_state_machine_class_raises_error():
 
 
 def test_assigning_to_settings_attribute_on_state_machine_raises_error():
+    class StateMachine(RuleBasedStateMachine):
+        @rule(x=st.none())
+        def a_rule(self, x):
+            assert x is None
+
     with pytest.raises(AttributeError):
-
-        class StateMachine(RuleBasedStateMachine):
-            @rule(x=st.none())
-            def a_rule(self, x):
-                assert x is None
-
         StateMachine.settings = settings()
 
     state_machine_instance = StateMachine()
@@ -443,6 +458,7 @@ def test_derandomise_with_explicit_database_is_invalid():
         {"deadline": 0},
         {"deadline": True},
         {"deadline": False},
+        {"backend": "this_backend_does_not_exist"},
     ],
 )
 def test_invalid_settings_are_errors(kwargs):
@@ -463,8 +479,12 @@ def test_invalid_parent():
     assert "parent=(not settings repr)" in str(excinfo.value)
 
 
+def test_default_settings_do_not_use_ci():
+    assert settings.get_profile("default").suppress_health_check == ()
+
+
 def test_show_changed():
-    s = settings(max_examples=999, database=None, phases=tuple(Phase)[:-1])
+    s = settings(settings.get_profile("default"), max_examples=999, database=None)
     assert s.show_changed() == "database=None, max_examples=999"
 
 
@@ -482,3 +502,96 @@ def test_note_deprecation_checks_has_codemod():
         match="The `hypothesis codemod` command-line tool",
     ):
         note_deprecation("This is bad", since="2021-01-01", has_codemod=True)
+
+
+def test_deprecated_settings_warn_on_set_settings():
+    with validate_deprecation():
+        settings(suppress_health_check=[HealthCheck.return_value])
+    with validate_deprecation():
+        settings(suppress_health_check=[HealthCheck.not_a_test_method])
+
+
+@checks_deprecated_behaviour
+def test_deprecated_settings_not_in_settings_all_list():
+    al = HealthCheck.all()
+    ls = list(HealthCheck)
+    assert al == ls
+    assert HealthCheck.return_value not in ls
+    assert HealthCheck.not_a_test_method not in ls
+
+
+@skipif_emscripten
+def test_check_defaults_to_derandomize_when_running_on_ci():
+    env = dict(os.environ)
+    env["CI"] = "true"
+
+    assert (
+        subprocess.check_output(
+            [
+                sys.executable,
+                "-c",
+                "from hypothesis import settings\nprint(settings().derandomize)",
+            ],
+            env=env,
+            text=True,
+            encoding="utf-8",
+        ).strip()
+        == "True"
+    )
+
+
+@skipif_emscripten
+def test_check_defaults_to_randomize_when_not_running_on_ci():
+    env = dict(os.environ)
+    env.pop("CI", None)
+    env.pop("TF_BUILD", None)
+    assert (
+        subprocess.check_output(
+            [
+                sys.executable,
+                "-c",
+                "from hypothesis import settings\nprint(settings().derandomize)",
+            ],
+            env=env,
+            text=True,
+            encoding="utf-8",
+        ).strip()
+        == "False"
+    )
+
+
+def test_reloads_the_loaded_profile_if_registered_again():
+    prev_profile = settings._current_profile
+    try:
+        test_profile = "some nonsense profile purely for this test"
+        test_value = 123456
+        settings.register_profile(test_profile, settings(max_examples=test_value))
+        settings.load_profile(test_profile)
+        assert settings.default.max_examples == test_value
+        test_value_2 = 42
+        settings.register_profile(test_profile, settings(max_examples=test_value_2))
+        assert settings.default.max_examples == test_value_2
+    finally:
+        if prev_profile is not None:
+            settings.load_profile(prev_profile)
+
+
+CI_TESTING_SCRIPT = """
+from hypothesis import settings
+
+if __name__ == '__main__':
+    settings.register_profile("ci", settings(max_examples=42))
+    assert settings.default.max_examples == 42
+"""
+
+
+@skipif_emscripten
+def test_will_automatically_pick_up_changes_to_ci_profile_in_ci():
+    env = dict(os.environ)
+    env["CI"] = "true"
+    subprocess.check_call(
+        [sys.executable, "-c", CI_TESTING_SCRIPT],
+        env=env,
+        text=True,
+        encoding="utf-8",
+    )

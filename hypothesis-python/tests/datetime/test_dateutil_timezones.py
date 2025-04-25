@@ -9,18 +9,26 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import datetime as dt
+import sys
+import warnings
 
 import pytest
-from dateutil import tz, zoneinfo
 
 from hypothesis import assume, given
 from hypothesis.errors import FailedHealthCheck, InvalidArgument
-from hypothesis.extra.dateutil import timezones
 from hypothesis.strategies import data, datetimes, just, sampled_from, times
 from hypothesis.strategies._internal.datetime import datetime_does_not_exist
 
 from tests.common.debug import assert_all_examples, find_any, minimal
-from tests.common.utils import fails_with
+from tests.common.utils import Why, fails_with, xfail_on_crosshair
+
+with warnings.catch_warnings():
+    if sys.version_info[:2] >= (3, 12):
+        # Prior to https://github.com/dateutil/dateutil/pull/1285/
+        warnings.simplefilter("ignore", DeprecationWarning)
+    from dateutil import tz, zoneinfo
+
+from hypothesis.extra.dateutil import timezones
 
 
 def test_utc_is_minimal():
@@ -95,11 +103,13 @@ DAY_WITH_IMAGINARY_HOUR_KWARGS = {
 }
 
 
+@xfail_on_crosshair(Why.other, strict=False)  # fromutc argument must be a datetime
 @given(datetimes(timezones=timezones()) | datetimes(**DAY_WITH_IMAGINARY_HOUR_KWARGS))
 def test_dateutil_exists_our_not_exists_are_inverse(value):
     assert datetime_does_not_exist(value) == (not tz.datetime_exists(value))
 
 
+@xfail_on_crosshair(Why.undiscovered)
 def test_datetimes_can_exclude_imaginary():
     find_any(
         datetimes(**DAY_WITH_IMAGINARY_HOUR_KWARGS, allow_imaginary=True),
@@ -111,6 +121,7 @@ def test_datetimes_can_exclude_imaginary():
     )
 
 
+@xfail_on_crosshair(Why.undiscovered)
 @fails_with(FailedHealthCheck)
 @given(
     datetimes(

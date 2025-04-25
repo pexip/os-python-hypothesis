@@ -8,26 +8,17 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-import sys
-
-if sys.version_info[:2] < (3, 8):
-    raise RuntimeError("The Array API standard requires Python 3.8 or later")
-
 import math
+import sys
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from numbers import Real
 from types import SimpleNamespace
 from typing import (
+    TYPE_CHECKING,
     Any,
-    Iterable,
-    Iterator,
-    List,
     Literal,
-    Mapping,
     NamedTuple,
     Optional,
-    Sequence,
-    Tuple,
-    Type,
     TypeVar,
     Union,
     get_args,
@@ -64,15 +55,18 @@ from hypothesis.internal.validation import (
 from hypothesis.strategies._internal.strategies import check_strategy
 from hypothesis.strategies._internal.utils import defines_strategy
 
+if TYPE_CHECKING:
+    from typing import TypeAlias
+
 __all__ = [
     "make_strategies_namespace",
 ]
 
 
-RELEASED_VERSIONS = ("2021.12",)
-NOMINAL_VERSIONS = RELEASED_VERSIONS + ("draft",)
+RELEASED_VERSIONS = ("2021.12", "2022.12", "2023.12", "2024.12")
+NOMINAL_VERSIONS = (*RELEASED_VERSIONS, "draft")
 assert sorted(NOMINAL_VERSIONS) == list(NOMINAL_VERSIONS)  # sanity check
-NominalVersion = Literal["2021.12", "draft"]
+NominalVersion = Literal["2021.12", "2022.12", "2023.12", "2024.12", "draft"]
 assert get_args(NominalVersion) == NOMINAL_VERSIONS  # sanity check
 
 
@@ -83,13 +77,13 @@ FLOAT_NAMES = ("float32", "float64")
 REAL_NAMES = ALL_INT_NAMES + FLOAT_NAMES
 COMPLEX_NAMES = ("complex64", "complex128")
 NUMERIC_NAMES = REAL_NAMES + COMPLEX_NAMES
-DTYPE_NAMES = ("bool",) + NUMERIC_NAMES
+DTYPE_NAMES = ("bool", *NUMERIC_NAMES)
 
 DataType = TypeVar("DataType")
 
 
 @check_function
-def check_xp_attributes(xp: Any, attributes: List[str]) -> None:
+def check_xp_attributes(xp: Any, attributes: list[str]) -> None:
     missing_attrs = [attr for attr in attributes if not hasattr(xp, attr)]
     if len(missing_attrs) > 0:
         f_attrs = ", ".join(missing_attrs)
@@ -100,7 +94,7 @@ def check_xp_attributes(xp: Any, attributes: List[str]) -> None:
 
 def partition_attributes_and_stubs(
     xp: Any, attributes: Iterable[str]
-) -> Tuple[List[Any], List[str]]:
+) -> tuple[list[Any], list[str]]:
     non_stubs = []
     stubs = []
     for attr in attributes:
@@ -112,18 +106,19 @@ def partition_attributes_and_stubs(
     return non_stubs, stubs
 
 
-def warn_on_missing_dtypes(xp: Any, stubs: List[str]) -> None:
+def warn_on_missing_dtypes(xp: Any, stubs: list[str]) -> None:
     f_stubs = ", ".join(stubs)
     warn(
         f"Array module {xp.__name__} does not have the following "
         f"dtypes in its namespace: {f_stubs}",
         HypothesisWarning,
+        stacklevel=3,
     )
 
 
 def find_castable_builtin_for_dtype(
     xp: Any, api_version: NominalVersion, dtype: DataType
-) -> Type[Union[bool, int, float, complex]]:
+) -> type[Union[bool, int, float, complex]]:
     """Returns builtin type which can have values that are castable to the given
     dtype, according to :xp-ref:`type promotion rules <type_promotion.html>`.
 
@@ -194,7 +189,7 @@ def _from_dtype(
     allow_subnormal: Optional[bool] = None,
     exclude_min: Optional[bool] = None,
     exclude_max: Optional[bool] = None,
-) -> st.SearchStrategy[Union[bool, int, float]]:
+) -> st.SearchStrategy[Union[bool, int, float, complex]]:
     """Return a strategy for any value of the given dtype.
 
     Values generated are of the Python scalar which is
@@ -281,7 +276,7 @@ def _from_dtype(
         if allow_subnormal is not None:
             kw["allow_subnormal"] = allow_subnormal
         else:
-            subnormal = next_down(finfo.smallest_normal, width=finfo.bits)
+            subnormal = next_down(float(finfo.smallest_normal), width=finfo.bits)
             ftz = bool(xp.asarray(subnormal, dtype=dtype) == 0)
             if ftz:
                 kw["allow_subnormal"] = False
@@ -297,30 +292,21 @@ def _from_dtype(
 
         return st.floats(width=finfo.bits, **kw)
     else:
-        # A less-inelegant solution to support complex dtypes exists, but as
-        # this is currently a draft feature, we might as well wait for
-        # discussion of complex inspection to resolve first - a better method
-        # might become available soon enough.
-        # See https://github.com/data-apis/array-api/issues/433
-        for attr in ["float32", "float64", "complex64"]:
-            if not hasattr(xp, attr):
-                raise NotImplementedError(
-                    f"Array module {xp.__name__} has no dtype {attr}, which is "
-                    "currently required for xps.from_dtype() to work with "
-                    "any complex dtype."
-                )
-        component_dtype = xp.float32 if dtype == xp.complex64 else xp.float64
-
-        floats = _from_dtype(
-            xp,
-            api_version,
-            component_dtype,
+        finfo = xp.finfo(dtype)
+        # See above comment on FTZ inference. We explicitly infer with a
+        # complex array, in case complex arrays have different FTZ behaviour
+        # than arrays of the respective composite float.
+        if allow_subnormal is None:
+            subnormal = next_down(float(finfo.smallest_normal), width=finfo.bits)
+            x = xp.asarray(complex(subnormal, subnormal), dtype=dtype)
+            builtin_x = complex(x)
+            allow_subnormal = builtin_x.real != 0 and builtin_x.imag != 0
+        return st.complex_numbers(
             allow_nan=allow_nan,
             allow_infinity=allow_infinity,
             allow_subnormal=allow_subnormal,
+            width=finfo.bits * 2,
         )
-
-        return st.builds(complex, floats, floats)  # type: ignore[arg-type]
 
 
 class ArrayStrategy(st.SearchStrategy):
@@ -410,21 +396,8 @@ class ArrayStrategy(st.SearchStrategy):
             # our elements strategy to those indices.
 
             fill_val = data.draw(self.fill)
-            try:
-                result = self.xp.full(self.array_size, fill_val, dtype=self.dtype)
-            except Exception as e:
-                raise InvalidArgument(
-                    f"Could not create full array of dtype={self.dtype} "
-                    f"with fill value {fill_val!r}"
-                ) from e
-            sample = result[0]
-            self.check_set_value(fill_val, sample, self.fill)
-            if self.unique and not self.xp.all(self.xp.isnan(result)):
-                raise InvalidArgument(
-                    f"Array module {self.xp.__name__} did not recognise fill "
-                    f"value {fill_val!r} as NaN - instead got {sample!r}. "
-                    "Cannot fill unique array with non-NaN values."
-                )
+            result_obj = [fill_val for _ in range(self.array_size)]
+            fill_mask = [True for _ in range(self.array_size)]
 
             elements = cu.many(
                 data,
@@ -443,30 +416,40 @@ class ArrayStrategy(st.SearchStrategy):
             seen = set()
 
             while elements.more():
-                i = cu.integer_range(data, 0, self.array_size - 1)
+                i = data.draw_integer(0, self.array_size - 1)
                 if i in assigned:
-                    elements.reject()
+                    elements.reject("chose an array index we've already used")
                     continue
                 val = data.draw(self.elements_strategy)
                 if self.unique:
                     if val in seen:
-                        elements.reject()
+                        elements.reject("chose an element we've already used")
                         continue
                     else:
                         seen.add(val)
-                try:
-                    result[i] = val
-                except Exception as e:
-                    raise InvalidArgument(
-                        f"Could not add generated array element {val!r} "
-                        f"of type {type(val)} to array of dtype {result.dtype}."
-                    ) from e
-                self.check_set_value(val, result[i], self.elements_strategy)
+                result_obj[i] = val
                 assigned.add(i)
+                fill_mask[i] = False
 
-        result = self.xp.reshape(result, self.shape)
+            try:
+                result = self.xp.asarray(result_obj, dtype=self.dtype)
+            except Exception as e:
+                f_expr = f"xp.asarray({result_obj}, dtype={self.dtype})"
+                raise InvalidArgument(f"Could not create array via {f_expr}") from e
 
-        return result
+            for i, val in enumerate(result_obj):
+                val_0d = result[i]
+                if fill_mask[i] and self.unique:
+                    if not self.xp.isnan(val_0d):
+                        raise InvalidArgument(
+                            f"Array module {self.xp.__name__} did not recognise fill "
+                            f"value {fill_val!r} as NaN - instead got {val_0d!r}. "
+                            "Cannot fill unique array with non-NaN values."
+                        )
+                else:
+                    self.check_set_value(val, val_0d, self.elements_strategy)
+
+        return self.xp.reshape(result, self.shape)
 
 
 def _arrays(
@@ -516,9 +499,6 @@ def _arrays(
       >>> xps.arrays(xp, xp.int8, 3, elements={"min_value": 10}).example()
       Array([125, 13, 79], dtype=int8)
 
-    Refer to :doc:`What you can generate and how <data>` for passing
-    your own elements strategy.
-
     .. code-block:: pycon
 
       >>> xps.arrays(xp, xp.float32, 3, elements=floats(0, 1, width=32)).example()
@@ -549,7 +529,7 @@ def _arrays(
     your tests to run in reasonable time.
     """
     check_xp_attributes(
-        xp, ["finfo", "asarray", "zeros", "full", "all", "isnan", "isfinite", "reshape"]
+        xp, ["finfo", "asarray", "zeros", "all", "isnan", "isfinite", "reshape"]
     )
 
     if isinstance(dtype, st.SearchStrategy):
@@ -573,7 +553,7 @@ def _arrays(
         raise InvalidArgument(f"shape={shape} is not a valid shape or strategy")
     check_argument(
         all(isinstance(x, int) and x >= 0 for x in shape),
-        f"shape={shape!r}, but all dimensions must be non-negative integers.",
+        f"{shape=}, but all dimensions must be non-negative integers.",
     )
 
     if elements is None:
@@ -602,7 +582,7 @@ def _arrays(
 
 
 @check_function
-def check_dtypes(xp: Any, dtypes: List[DataType], stubs: List[str]) -> None:
+def check_dtypes(xp: Any, dtypes: list[DataType], stubs: list[str]) -> None:
     if len(dtypes) == 0:
         assert len(stubs) > 0, "No dtypes passed but stubs is empty"
         f_stubs = ", ".join(stubs)
@@ -669,8 +649,13 @@ def numeric_dtype_names(base_name: str, sizes: Sequence[int]) -> Iterator[str]:
         yield f"{base_name}{size}"
 
 
+IntSize: "TypeAlias" = Literal[8, 16, 32, 64]
+FltSize: "TypeAlias" = Literal[32, 64]
+CpxSize: "TypeAlias" = Literal[64, 128]
+
+
 def _integer_dtypes(
-    xp: Any, *, sizes: Union[int, Sequence[int]] = (8, 16, 32, 64)
+    xp: Any, *, sizes: Union[IntSize, Sequence[IntSize]] = (8, 16, 32, 64)
 ) -> st.SearchStrategy[DataType]:
     """Return a strategy for signed integer dtype objects.
 
@@ -688,7 +673,7 @@ def _integer_dtypes(
 
 
 def _unsigned_integer_dtypes(
-    xp: Any, *, sizes: Union[int, Sequence[int]] = (8, 16, 32, 64)
+    xp: Any, *, sizes: Union[IntSize, Sequence[IntSize]] = (8, 16, 32, 64)
 ) -> st.SearchStrategy[DataType]:
     """Return a strategy for unsigned integer dtype objects.
 
@@ -708,7 +693,7 @@ def _unsigned_integer_dtypes(
 
 
 def _floating_dtypes(
-    xp: Any, *, sizes: Union[int, Sequence[int]] = (32, 64)
+    xp: Any, *, sizes: Union[FltSize, Sequence[FltSize]] = (32, 64)
 ) -> st.SearchStrategy[DataType]:
     """Return a strategy for real-valued floating-point dtype objects.
 
@@ -726,7 +711,7 @@ def _floating_dtypes(
 
 
 def _complex_dtypes(
-    xp: Any, *, sizes: Union[int, Sequence[int]] = (64, 128)
+    xp: Any, *, sizes: Union[CpxSize, Sequence[CpxSize]] = (64, 128)
 ) -> st.SearchStrategy[DataType]:
     """Return a strategy for complex dtype objects.
 
@@ -812,7 +797,7 @@ def indices(
     check_type(tuple, shape, "shape")
     check_argument(
         all(isinstance(x, int) and x >= 0 for x in shape),
-        f"shape={shape!r}, but all dimensions must be non-negative integers.",
+        f"{shape=}, but all dimensions must be non-negative integers.",
     )
     check_type(bool, allow_newaxis, "allow_newaxis")
     check_type(bool, allow_ellipsis, "allow_ellipsis")
@@ -906,7 +891,7 @@ def make_strategies_namespace(
         check_argument(
             isinstance(xp.__array_api_version__, str)
             and xp.__array_api_version__ in RELEASED_VERSIONS,
-            f"xp.__array_api_version__={xp.__array_api_version__!r}, but it must "
+            f"{xp.__array_api_version__=}, but it must "
             f"be a valid version string {RELEASED_VERSIONS}. {not_available_msg}",
         )
         api_version = xp.__array_api_version__
@@ -914,7 +899,7 @@ def make_strategies_namespace(
     else:
         check_argument(
             isinstance(api_version, str) and api_version in NOMINAL_VERSIONS,
-            f"api_version={api_version!r}, but it must be None, or a valid version "
+            f"{api_version=}, but it must be None, or a valid version "
             f"string in {RELEASED_VERSIONS}. {not_available_msg}",
         )
         inferred_version = False
@@ -925,6 +910,7 @@ def make_strategies_namespace(
         warn(
             f"Could not determine whether module {xp.__name__} is an Array API library",
             HypothesisWarning,
+            stacklevel=2,
         )
 
     try:
@@ -945,10 +931,10 @@ def make_strategies_namespace(
         allow_subnormal: Optional[bool] = None,
         exclude_min: Optional[bool] = None,
         exclude_max: Optional[bool] = None,
-    ) -> st.SearchStrategy[Union[bool, int, float]]:
+    ) -> st.SearchStrategy[Union[bool, int, float, complex]]:
         return _from_dtype(
             xp,
-            api_version,  # type: ignore[arg-type]
+            api_version,
             dtype,
             min_value=min_value,
             max_value=max_value,
@@ -958,28 +944,6 @@ def make_strategies_namespace(
             exclude_min=exclude_min,
             exclude_max=exclude_max,
         )
-
-    # torch.full() does not accept integers as the shape argument (n.b.
-    # technically "size" in torch), but such behaviour is expected in
-    # xps.arrays(), so we copy xp and patch in a working function.
-    if xp is sys.modules.get("torch", object()):
-
-        class PatchedArrayModule:
-            def __getattr__(self, attr):
-                return getattr(xp, attr)
-
-            @property
-            def __name__(self):
-                return "torch<modified>"
-
-            def full(self, shape, *a, **kw):
-                if isinstance(shape, int):
-                    shape = (shape,)
-                return xp.full(shape, *a, **kw)
-
-        arrays_xp = PatchedArrayModule()
-    else:
-        arrays_xp = xp
 
     @defines_strategy(force_reusable_values=True)
     def arrays(
@@ -993,8 +957,8 @@ def make_strategies_namespace(
         unique: bool = False,
     ) -> st.SearchStrategy:
         return _arrays(
-            arrays_xp,
-            api_version,  # type: ignore[arg-type]
+            xp,
+            api_version,
             dtype,
             shape,
             elements=elements,
@@ -1004,7 +968,7 @@ def make_strategies_namespace(
 
     @defines_strategy()
     def scalar_dtypes() -> st.SearchStrategy[DataType]:
-        return _scalar_dtypes(xp, api_version)  # type: ignore[arg-type]
+        return _scalar_dtypes(xp, api_version)
 
     @defines_strategy()
     def boolean_dtypes() -> st.SearchStrategy[DataType]:
@@ -1016,23 +980,23 @@ def make_strategies_namespace(
 
     @defines_strategy()
     def numeric_dtypes() -> st.SearchStrategy[DataType]:
-        return _numeric_dtypes(xp, api_version)  # type: ignore[arg-type]
+        return _numeric_dtypes(xp, api_version)
 
     @defines_strategy()
     def integer_dtypes(
-        *, sizes: Union[int, Sequence[int]] = (8, 16, 32, 64)
+        *, sizes: Union[IntSize, Sequence[IntSize]] = (8, 16, 32, 64)
     ) -> st.SearchStrategy[DataType]:
         return _integer_dtypes(xp, sizes=sizes)
 
     @defines_strategy()
     def unsigned_integer_dtypes(
-        *, sizes: Union[int, Sequence[int]] = (8, 16, 32, 64)
+        *, sizes: Union[IntSize, Sequence[IntSize]] = (8, 16, 32, 64)
     ) -> st.SearchStrategy[DataType]:
         return _unsigned_integer_dtypes(xp, sizes=sizes)
 
     @defines_strategy()
     def floating_dtypes(
-        *, sizes: Union[int, Sequence[int]] = (32, 64)
+        *, sizes: Union[FltSize, Sequence[FltSize]] = (32, 64)
     ) -> st.SearchStrategy[DataType]:
         return _floating_dtypes(xp, sizes=sizes)
 
@@ -1049,7 +1013,7 @@ def make_strategies_namespace(
     class StrategiesNamespace(SimpleNamespace):
         def __init__(self, **kwargs):
             for attr in ["name", "api_version"]:
-                if attr not in kwargs.keys():
+                if attr not in kwargs:
                     raise ValueError(f"'{attr}' kwarg required")
             super().__init__(**kwargs)
 
@@ -1093,7 +1057,7 @@ def make_strategies_namespace(
 
         @defines_strategy()
         def complex_dtypes(
-            *, sizes: Union[int, Sequence[int]] = (64, 128)
+            *, sizes: Union[CpxSize, Sequence[CpxSize]] = (64, 128)
         ) -> st.SearchStrategy[DataType]:
             return _complex_dtypes(xp, sizes=sizes)
 
@@ -1118,7 +1082,7 @@ except ImportError:
 
         np = Mock()
     else:
-        np = None
+        np = None  # type: ignore[assignment]
 if np is not None:
 
     class FloatInfo(NamedTuple):
@@ -1139,7 +1103,7 @@ if np is not None:
         introduced it in v1.21.1, so we just use the equivalent tiny attribute
         to keep mocking with older versions working.
         """
-        _finfo = np.finfo(dtype)
+        _finfo = np.finfo(dtype)  # type: ignore[call-overload]
         return FloatInfo(
             int(_finfo.bits),
             float(_finfo.eps),
@@ -1150,7 +1114,7 @@ if np is not None:
 
     mock_xp = SimpleNamespace(
         __name__="mock",
-        __array_api_version__="2021.12",
+        __array_api_version__="2022.12",
         # Data types
         int8=np.int8,
         int16=np.int16,
@@ -1176,10 +1140,8 @@ if np is not None:
         arange=np.arange,
         asarray=np.asarray,
         empty=np.empty,
-        full=np.full,
         zeros=np.zeros,
         ones=np.ones,
-        linspace=np.linspace,
         # Manipulation functions
         reshape=np.reshape,
         # Element-wise functions

@@ -15,13 +15,15 @@ import pytest
 from hypothesis import given, settings
 from hypothesis.strategies._internal import SearchStrategy
 
+from tests.common.utils import Why, xfail_on_crosshair
+
 
 class Blocks(SearchStrategy):
     def __init__(self, n):
         self.n = n
 
     def do_draw(self, data):
-        return data.draw_bytes(self.n)
+        return data.draw_bytes(self.n, self.n)
 
 
 @pytest.mark.parametrize("n", range(1, 5))
@@ -37,6 +39,7 @@ def test_does_not_duplicate_blocks(n):
     assert set(counts.values()) == {1}
 
 
+@xfail_on_crosshair(Why.other, strict=False)  # CrosshairInternal for n>0
 @pytest.mark.parametrize("n", range(1, 5))
 def test_mostly_does_not_duplicate_blocks_even_when_failing(n):
     counts = Counter()
@@ -46,7 +49,7 @@ def test_mostly_does_not_duplicate_blocks_even_when_failing(n):
     def test(b):
         counts[b] += 1
         if len(counts) > 3:
-            raise ValueError()
+            raise ValueError
 
     try:
         test()
@@ -58,6 +61,5 @@ def test_mostly_does_not_duplicate_blocks_even_when_failing(n):
     # complication comes from the fact that these may or may not be the same
     # test case, so we can see either two test cases each run twice or one
     # test case which has been run three times.
-    seen_counts = set(counts.values())
-    assert seen_counts in ({1, 2}, {1, 3})
+    assert set(counts.values()) in ({1, 2}, {1, 3})
     assert len([k for k, v in counts.items() if v > 1]) <= 2

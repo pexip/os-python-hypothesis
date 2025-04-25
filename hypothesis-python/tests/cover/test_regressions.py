@@ -24,6 +24,8 @@ from hypothesis import (
     settings,
     strategies as st,
 )
+from hypothesis.internal import compat
+from hypothesis.internal.escalation import InterestingOrigin
 
 
 def strat():
@@ -97,7 +99,7 @@ def test_regression_issue_1230():
     @given(strategy)
     def test_false_is_false(params):
         assume(params.get("0") not in ("", "\x00"))
-        raise ValueError()
+        raise ValueError
 
     with pytest.raises(ValueError):
         test_false_is_false()
@@ -128,6 +130,14 @@ exc_instances = [
     errors.DeadlineExceeded(
         runtime=timedelta(seconds=1.5), deadline=timedelta(seconds=1.0)
     ),
+    errors.RewindRecursive(int),
+    errors.UnsatisfiedAssumption("reason for unsatisfied"),
+    errors.FlakyReplay(
+        "reason",
+        interesting_origins=[InterestingOrigin.from_exception(BaseException())],
+    ),
+    errors.FlakyFailure("check with BaseException", [BaseException()]),
+    errors.BackendCannotProceed("verified"),
 ]
 
 
@@ -141,7 +151,10 @@ def test_no_missed_custom_init_exceptions():
     untested_errors_with_custom_init = {
         et
         for et in vars(errors).values()
-        if isinstance(et, type) and issubclass(et, Exception) and "__init__" in vars(et)
+        if isinstance(et, type)
+        and et not in vars(compat).values()  # skip types imported for compatibility
+        and issubclass(et, Exception)
+        and ("__init__" in vars(et) or "__new__" in vars(et))
     } - {type(exc) for exc in exc_instances}
     print(untested_errors_with_custom_init)
     assert not untested_errors_with_custom_init

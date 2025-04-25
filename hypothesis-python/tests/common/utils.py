@@ -9,7 +9,9 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import contextlib
+import enum
 import sys
+import warnings
 from io import StringIO
 from types import SimpleNamespace
 
@@ -17,6 +19,7 @@ from hypothesis import Phase, settings
 from hypothesis.errors import HypothesisDeprecationWarning
 from hypothesis.internal.entropy import deterministic_PRNG
 from hypothesis.internal.floats import next_down
+from hypothesis.internal.observability import TESTCASE_CALLBACKS
 from hypothesis.internal.reflection import proxies
 from hypothesis.reporting import default, with_reporter
 from hypothesis.strategies._internal.core import from_type, register_type_strategy
@@ -47,7 +50,21 @@ except ModuleNotFoundError:
             ) from None
 
 
-no_shrink = tuple(set(settings.default.phases) - {Phase.shrink})
+try:
+    from pytest import mark
+except ModuleNotFoundError:
+
+    def skipif_emscripten(f):
+        return f
+
+else:
+    skipif_emscripten = mark.skipif(
+        sys.platform == "emscripten",
+        reason="threads, processes, etc. are not available in the browser",
+    )
+
+
+no_shrink = tuple(set(settings.default.phases) - {Phase.shrink, Phase.explain})
 
 
 def flaky(max_runs, min_passes):
@@ -198,8 +215,8 @@ def temp_registered(type_, strat_or_factory):
     previously-registered strategy which we got wrong in a few places.
     """
     prev = _global_type_lookup.get(type_)
+    register_type_strategy(type_, strat_or_factory)
     try:
-        register_type_strategy(type_, strat_or_factory)
         yield
     finally:
         del _global_type_lookup[type_]
@@ -208,9 +225,55 @@ def temp_registered(type_, strat_or_factory):
             register_type_strategy(type_, prev)
 
 
+@contextlib.contextmanager
+def raises_warning(expected_warning, match=None):
+    """Use instead of pytest.warns to check that the raised warning is handled properly"""
+    with raises(expected_warning, match=match) as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", category=expected_warning)
+            yield r
+
+
+@contextlib.contextmanager
+def capture_observations():
+    ls = []
+    TESTCASE_CALLBACKS.append(ls.append)
+    try:
+        yield ls
+    finally:
+        TESTCASE_CALLBACKS.remove(ls.append)
+
+
 # Specifies whether we can represent subnormal floating point numbers.
 # IEE-754 requires subnormal support, but it's often disabled anyway by unsafe
 # compiler options like `-ffast-math`.  On most hardware that's even a global
 # config option, so *linking against* something built this way can break us.
 # Everything is terrible
 PYTHON_FTZ = next_down(sys.float_info.min) == 0.0
+
+
+class Why(enum.Enum):
+    # Categorizing known failures, to ease later follow-up investigation.
+    # Some are crosshair issues, some hypothesis issues, others truly ok-to-xfail tests.
+    symbolic_outside_context = "CrosshairInternal error (using value outside context)"
+    nested_given = "nested @given decorators don't work with crosshair"
+    undiscovered = "crosshair may not find the failing input"
+    other = "reasons not elsewhere categorized"
+
+
+def xfail_on_crosshair(why: Why, /, *, strict=True, as_marks=False):
+    # run `pytest -m xf_crosshair` to select these tests!
+    try:
+        import pytest
+    except ImportError:
+        return lambda fn: fn
+
+    current_backend = settings.get_profile(settings._current_profile).backend
+    kw = {
+        "strict": strict and why != Why.undiscovered,
+        "reason": f"Expected failure due to: {why.value}",
+        "condition": current_backend == "crosshair",
+    }
+    if as_marks:  # for use with pytest.param(..., marks=xfail_on_crosshair())
+        return (pytest.mark.xf_crosshair, pytest.mark.xfail(**kw))
+    return lambda fn: pytest.mark.xf_crosshair(pytest.mark.xfail(**kw)(fn))
