@@ -2,6 +2,7 @@ From: Nicolas Dandrimont <olasd@debian.org>
 Date: Tue, 19 Nov 2019 11:51:20 +0100
 Subject: Remove reference to remote image in docs
 
+Forwarded: not-needed
 ---
  hypothesis-python/docs/community.rst | 2 --
  1 file changed, 2 deletions(-)

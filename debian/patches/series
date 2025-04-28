@@ -1,4 +1,4 @@
 0001-Remove-reference-to-remote-image-in-docs.patch
 0002-Disable-hoverxref-not-in-Debian.patch
-0003-Skip-tests-which-break-in-Debian-autopkgtest.patch
-0004-Fix-failing-numpy-test.patch
+0003-Avoid-hard-dependency-on-libcst.patch
+0004-Do-not-enforce-minimum-Sphinx-version.patch

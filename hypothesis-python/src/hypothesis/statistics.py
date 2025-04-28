@@ -9,21 +9,26 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import math
-import statistics
 from collections import Counter
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, cast
 
+from hypothesis._settings import Phase
 from hypothesis.utils.dynamicvariables import DynamicVariable
+
+if TYPE_CHECKING:
+    from hypothesis.internal.conjecture.engine import PhaseStatistics, StatisticsDict
 
 collector = DynamicVariable(None)
 
 
-def note_statistics(stats_dict):
+def note_statistics(stats_dict: "StatisticsDict") -> None:
     callback = collector.value
     if callback is not None:
         callback(stats_dict)
 
 
-def describe_targets(best_targets):
+def describe_targets(best_targets: dict[str, float]) -> list[str]:
     """Return a list of lines describing the results of `target`, if any."""
     # These lines are included in the general statistics description below,
     # but also printed immediately below failing examples to alleviate the
@@ -33,15 +38,34 @@ def describe_targets(best_targets):
         return []
     elif len(best_targets) == 1:
         label, score = next(iter(best_targets.items()))
-        return [f"Highest target score: {score:g}  (label={label!r})"]
+        return [f"Highest target score: {score:g}  ({label=})"]
     else:
         lines = ["Highest target scores:"]
         for label, score in sorted(best_targets.items(), key=lambda x: x[::-1]):
-            lines.append(f"{score:>16g}  (label={label!r})")
+            lines.append(f"{score:>16g}  ({label=})")
         return lines
 
 
-def describe_statistics(stats_dict):
+def format_ms(times: Iterable[float]) -> str:
+    """Format `times` into a string representing approximate milliseconds.
+
+    `times` is a collection of durations in seconds.
+    """
+    ordered = sorted(times)
+    n = len(ordered) - 1
+    if n < 0 or any(math.isnan(t) for t in ordered):  # pragma: no cover
+        return "NaN ms"
+    lower = int(ordered[math.floor(n * 0.05)] * 1000)
+    upper = int(ordered[math.ceil(n * 0.95)] * 1000)
+    if upper == 0:
+        return "< 1ms"
+    elif lower == upper:
+        return f"~ {lower}ms"
+    else:
+        return f"~ {lower}-{upper} ms"
+
+
+def describe_statistics(stats_dict: "StatisticsDict") -> str:
     """Return a multi-line string describing the passed run statistics.
 
     `stats_dict` must be a dictionary of data in the format collected by
@@ -56,29 +80,18 @@ def describe_statistics(stats_dict):
     """
     lines = [stats_dict["nodeid"] + ":\n"] if "nodeid" in stats_dict else []
     prev_failures = 0
-    for phase in ["reuse", "generate", "shrink"]:
-        d = stats_dict.get(phase + "-phase", {})
+    for phase in (p.name for p in list(Phase)[1:]):
+        d = cast("PhaseStatistics", stats_dict.get(phase + "-phase", {}))
         # Basic information we report for every phase
         cases = d.get("test-cases", [])
         if not cases:
             continue
         statuses = Counter(t["status"] for t in cases)
-        runtimes = sorted(t["runtime"] for t in cases)
-        n = max(0, len(runtimes) - 1)
-        lower = int(runtimes[int(math.floor(n * 0.05))] * 1000)
-        upper = int(runtimes[int(math.ceil(n * 0.95))] * 1000)
-        if upper == 0:
-            ms = "< 1ms"
-        elif lower == upper:
-            ms = f"~ {lower}ms"
-        else:
-            ms = f"{lower}-{upper} ms"
-        drawtime_percent = 100 * statistics.mean(
-            t["drawtime"] / t["runtime"] if t["runtime"] > 0 else 0 for t in cases
-        )
+        runtime_ms = format_ms(t["runtime"] for t in cases)
+        drawtime_ms = format_ms(t["drawtime"] for t in cases)
         lines.append(
             f"  - during {phase} phase ({d['duration-seconds']:.2f} seconds):\n"
-            f"    - Typical runtimes: {ms}, ~ {drawtime_percent:.0f}% in data generation\n"
+            f"    - Typical runtimes: {runtime_ms}, of which {drawtime_ms} in data generation\n"
             f"    - {statuses['valid']} passing examples, {statuses['interesting']} "
             f"failing examples, {statuses['invalid'] + statuses['overrun']} invalid examples"
         )

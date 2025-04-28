@@ -17,6 +17,7 @@ from hypothesis import given
 from hypothesis.strategies import floats, integers, lists
 
 from tests.common.debug import minimal
+from tests.common.utils import Why, xfail_on_crosshair
 
 
 def test_minimize_negative_int():
@@ -58,7 +59,7 @@ def test_minimizes_ints_from_down_to_boundary(boundary):
 
     assert minimal(integers(min_value=boundary - 10), is_good) == boundary
 
-    assert minimal(integers(min_value=boundary), lambda x: True) == boundary
+    assert minimal(integers(min_value=boundary)) == boundary
 
 
 def test_minimizes_negative_integer_range_upwards():
@@ -67,11 +68,11 @@ def test_minimizes_negative_integer_range_upwards():
 
 @boundaries
 def test_minimizes_integer_range_to_boundary(boundary):
-    assert minimal(integers(boundary, boundary + 100), lambda x: True) == boundary
+    assert minimal(integers(boundary, boundary + 100)) == boundary
 
 
 def test_single_integer_range_is_range():
-    assert minimal(integers(1, 1), lambda x: True) == 1
+    assert minimal(integers(1, 1)) == 1
 
 
 def test_minimal_small_number_in_large_range():
@@ -97,11 +98,11 @@ def test_minimal_non_boundary_float():
 
 
 def test_minimal_float_is_zero():
-    assert minimal(floats(), lambda x: True) == 0.0
+    assert minimal(floats()) == 0.0
 
 
 def test_minimal_asymetric_bounded_float():
-    assert minimal(floats(min_value=1.1, max_value=1.9), lambda x: True) == 1.5
+    assert minimal(floats(min_value=1.1, max_value=1.6)) == 1.5
 
 
 def test_negative_floats_simplify_to_zero():
@@ -116,6 +117,7 @@ def test_can_minimal_infinite_negative_float():
     assert minimal(floats(), lambda x: x < -sys.float_info.max)
 
 
+@xfail_on_crosshair(Why.undiscovered)  # sometimes
 def test_can_minimal_float_on_boundary_of_representable():
     minimal(floats(), lambda x: x + 1 == x and not math.isinf(x))
 
@@ -145,7 +147,6 @@ def test_list_of_fractional_float():
         minimal(
             lists(floats(), min_size=5),
             lambda x: len([t for t in x if t >= 1.5]) >= 5,
-            timeout_after=60,
         )
     ) == {2}
 
@@ -154,11 +155,11 @@ def test_minimal_fractional_float():
     assert minimal(floats(), lambda x: x >= 1.5) == 2
 
 
+@xfail_on_crosshair(Why.undiscovered)
 def test_minimizes_lists_of_negative_ints_up_to_boundary():
     result = minimal(
         lists(integers(), min_size=10),
         lambda x: len([t for t in x if t <= -1]) >= 10,
-        timeout_after=60,
     )
     assert result == [-1] * 10
 
@@ -176,8 +177,8 @@ def test_floats_in_constrained_range(left, right):
 
 
 def test_bounds_are_respected():
-    assert minimal(floats(min_value=1.0), lambda x: True) == 1.0
-    assert minimal(floats(max_value=-1.0), lambda x: True) == -1.0
+    assert minimal(floats(min_value=1.0)) == 1.0
+    assert minimal(floats(max_value=-1.0)) == -1.0
 
 
 @pytest.mark.parametrize("k", range(10))

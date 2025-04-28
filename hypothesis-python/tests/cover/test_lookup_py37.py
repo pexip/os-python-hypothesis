@@ -8,28 +8,14 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-from __future__ import annotations
-
 import collections
 import collections.abc
 import contextlib
 import re
-import sys
 
 import pytest
 
 from hypothesis import assume, given
-
-# On Python 3.7 and 3.8, `from __future__ import annotations` means
-# that the syntax is supported; but the feature fails at runtime.  On Python
-# 3.9 and later, it should all work.
-#
-# For details, see https://www.python.org/dev/peps/pep-0585/
-
-if sys.version_info < (3, 9):
-    pytestmark = pytest.mark.xfail(
-        raises=Exception, reason="Requires Python 3.9 (PEP 585) or later."
-    )
 
 
 class Elem:
@@ -89,7 +75,7 @@ def test_resolving_standard_deque_as_generic(x: collections.deque[Elem]):
 
 @given(...)
 def test_resolving_standard_defaultdict_as_generic(
-    x: collections.defaultdict[Elem, Value]
+    x: collections.defaultdict[Elem, Value],
 ):
     check(collections.defaultdict, x)
     assert all(isinstance(e, Value) for e in x.values())
@@ -97,7 +83,7 @@ def test_resolving_standard_defaultdict_as_generic(
 
 @given(...)
 def test_resolving_standard_ordered_dict_as_generic(
-    x: collections.OrderedDict[Elem, Value]
+    x: collections.OrderedDict[Elem, Value],
 ):
     check(collections.OrderedDict, x)
     assert all(isinstance(e, Value) for e in x.values())
@@ -127,7 +113,7 @@ def test_resolving_standard_iterator_as_generic(x: collections.abc.Iterator[Elem
 
 @given(...)
 def test_resolving_standard_generator_as_generic(
-    x: collections.abc.Generator[Elem, None, Value]
+    x: collections.abc.Generator[Elem, None, Value],
 ):
     assert isinstance(x, collections.abc.Generator)
     try:
@@ -220,7 +206,7 @@ def test_resolving_standard_keysview_as_generic(x: collections.abc.KeysView[Elem
 
 @given(...)
 def test_resolving_standard_itemsview_as_generic(
-    x: collections.abc.ItemsView[Elem, Value]
+    x: collections.abc.ItemsView[Elem, Value],
 ):
     assert isinstance(x, collections.abc.ItemsView)
     assert all(isinstance(e, Elem) and isinstance(v, Value) for e, v in x)

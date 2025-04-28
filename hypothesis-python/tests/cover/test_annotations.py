@@ -8,17 +8,21 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+import warnings
 from inspect import Parameter as P, signature
 
 import attr
 import pytest
 
 from hypothesis import given, strategies as st
+from hypothesis.errors import SmallSearchSpaceWarning
 from hypothesis.internal.reflection import (
     convert_positional_arguments,
     define_function_signature,
     get_pretty_function_description,
 )
+
+from tests.common.debug import check_can_generate_examples
 
 
 @given(st.integers())
@@ -83,7 +87,7 @@ def test_converter_notices_missing_kwonly_args():
         assert convert_positional_arguments(f, (), {})
 
 
-def to_wrap_with_composite(draw: None, strat: bool, nothing: list) -> int:
+def to_wrap_with_composite(draw: None, strat: float, nothing: list) -> int:
     return draw(st.none())
 
 
@@ -124,6 +128,8 @@ def test_attrs_inference_builds(c):
     pass
 
 
-@given(st.from_type(Inferrables))
-def test_attrs_inference_from_type(c):
-    pass
+def test_attrs_inference_from_type():
+    s = st.from_type(Inferrables)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SmallSearchSpaceWarning)
+        check_can_generate_examples(s)

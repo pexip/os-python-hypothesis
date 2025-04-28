@@ -21,11 +21,31 @@ noted as provisional, in which case they may be changed in minor releases.
 Undocumented attributes, modules, and behaviour may include breaking
 changes in patch releases.
 
+
+.. _deprecation-policy:
+
+------------
+Deprecations
+------------
+
+Deprecated features will emit warnings for at least six
+months, and then be removed in the following major release.
+
+Note however that not all warnings are subject to this grace period;
+sometimes we strengthen validation by adding a warning and these may
+become errors immediately at a major release.
+
+We use custom exception and warning types, so you can see
+exactly where an error came from, or turn only our warnings into errors.
+
+.. autoclass:: hypothesis.errors.HypothesisDeprecationWarning
+
+
 ---------------
 Python versions
 ---------------
 
-Hypothesis is supported and tested on CPython 3.7+, i.e.
+Hypothesis is supported and tested on CPython 3.9+, i.e.
 `all versions of CPython with upstream support <https://devguide.python.org/versions/>`_,
 along with PyPy for the same versions.
 32-bit builds of CPython also work, though we only test them on Windows.
@@ -82,7 +102,7 @@ In terms of what's actually *known* to work:
   * Integration with Django's testing requires use of the :ref:`hypothesis-django` extra.
     The issue is that in Django's tests' normal mode of execution it will reset the
     database once per test rather than once per example, which is not what you want.
-  * :pypi:`Coverage` works out of the box with Hypothesis; our own test suite has
+  * :pypi:`coverage` works out of the box with Hypothesis; our own test suite has
     100% branch coverage.
 
 -----------------
@@ -92,6 +112,22 @@ Optional packages
 The supported versions of optional packages, for strategies in ``hypothesis.extra``,
 are listed in the documentation for that extra.  Our general goal is to support
 all versions that are supported upstream.
+
+--------------------
+Thread-Safety Policy
+--------------------
+
+As discussed in :issue:`2719`, Hypothesis is not truly thread-safe and that's unlikely to change in the future.  This policy therefore describes what you *can* expect if you use Hypothesis with multiple threads.
+
+**Running tests in multiple processes**, e.g. with ``pytest -n auto``, is fully supported and we test this regularly in CI - thanks to process isolation, we only need to ensure that :class:`~hypothesis.database.DirectoryBasedExampleDatabase` can't tread on its own toes too badly.  If you find a bug here we will fix it ASAP.
+
+**Running separate tests in multiple threads** is not something we design or test for, and is not formally supported.  That said, anecdotally it does mostly work and we would like it to keep working - we accept reasonable patches and low-priority bug reports.  The main risks here are global state, shared caches, and cached strategies.
+
+**Running the same test in multiple threads** , or using multiple threads within the same test, makes it pretty easy to trigger internal errors.  We usually accept patches for such issues unless readability or single-thread performance suffer.
+
+Hypothesis assumes that tests are single-threaded, or do a sufficiently-good job of pretending to be single-threaded.  Tests that use helper threads internally should be OK, but the user must be careful to ensure that test outcomes are still deterministic. In particular it counts as nondeterministic if helper-thread timing changes the sequence of dynamic draws using e.g. the |st.data| strategy.
+
+Interacting with any Hypothesis APIs from helper threads might do weird/bad things, so avoid that too - we rely on thread-local variables in a few places, and haven't explicitly tested/audited how they respond to cross-thread API calls.  While |st.data| and equivalents are the most obvious danger, other APIs might also be subtly affected.
 
 ------------------------
 Regularly verifying this

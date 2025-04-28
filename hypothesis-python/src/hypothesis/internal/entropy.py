@@ -13,26 +13,24 @@ import gc
 import random
 import sys
 import warnings
+from collections.abc import Generator, Hashable
 from itertools import count
-from typing import TYPE_CHECKING, Any, Callable, Hashable, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Optional
 from weakref import WeakValueDictionary
 
 import hypothesis.core
 from hypothesis.errors import HypothesisWarning, InvalidArgument
-from hypothesis.internal.compat import PYPY
+from hypothesis.internal.compat import FREE_THREADED_CPYTHON, GRAALPY, PYPY
 
 if TYPE_CHECKING:
-    if sys.version_info >= (3, 8):
-        from typing import Protocol
-    else:
-        from typing_extensions import Protocol
+    from typing import Protocol
 
     # we can't use this at runtime until from_type supports
     # protocols -- breaks ghostwriter tests
     class RandomLike(Protocol):
-        seed: Callable[..., Any]
-        getstate: Callable[[], Any]
-        setstate: Callable[..., Any]
+        def seed(self, *args: Any, **kwargs: Any) -> Any: ...
+        def getstate(self, *args: Any, **kwargs: Any) -> Any: ...
+        def setstate(self, *args: Any, **kwargs: Any) -> Any: ...
 
 else:  # pragma: no cover
     RandomLike = random.Random
@@ -41,11 +39,13 @@ else:  # pragma: no cover
 # with their respective Random instances even as new ones are registered and old
 # ones go out of scope and get garbage collected.  Keys are ascending integers.
 _RKEY = count()
-RANDOMS_TO_MANAGE: WeakValueDictionary = WeakValueDictionary({next(_RKEY): random})
+RANDOMS_TO_MANAGE: WeakValueDictionary[int, RandomLike] = WeakValueDictionary(
+    {next(_RKEY): random}
+)
 
 
 class NumpyRandomWrapper:
-    def __init__(self):
+    def __init__(self) -> None:
         assert "numpy" in sys.modules
         # This class provides a shim that matches the numpy to stdlib random,
         # and lets us avoid importing Numpy until it's already in use.
@@ -56,10 +56,10 @@ class NumpyRandomWrapper:
         self.setstate = numpy.random.set_state
 
 
-NP_RANDOM = None
+NP_RANDOM: Optional[RandomLike] = None
 
 
-if not PYPY:
+if not (PYPY or GRAALPY):
 
     def _get_platform_base_refcount(r: Any) -> int:
         return sys.getrefcount(r)
@@ -68,7 +68,7 @@ if not PYPY:
     # the given platform / version of Python.
     _PLATFORM_REF_COUNT = _get_platform_base_refcount(object())
 else:  # pragma: no cover
-    # PYPY doesn't have `sys.getrefcount`
+    # PYPY and GRAALPY don't have `sys.getrefcount`
     _PLATFORM_REF_COUNT = -1
 
 
@@ -113,13 +113,13 @@ def register_random(r: RandomLike) -> None:
            register_random(rng)
     """
     if not (hasattr(r, "seed") and hasattr(r, "getstate") and hasattr(r, "setstate")):
-        raise InvalidArgument(f"r={r!r} does not have all the required methods")
+        raise InvalidArgument(f"{r=} does not have all the required methods")
 
     if r in RANDOMS_TO_MANAGE.values():
         return
 
-    if not PYPY:  # pragma: no branch
-        # PYPY does not have `sys.getrefcount`
+    if not (PYPY or GRAALPY):  # pragma: no branch
+        # PYPY and GRAALPY do not have `sys.getrefcount`.
         gc.collect()
         if not gc.get_referrers(r):
             if sys.getrefcount(r) <= _PLATFORM_REF_COUNT:
@@ -127,18 +127,22 @@ def register_random(r: RandomLike) -> None:
                     f"`register_random` was passed `r={r}` which will be "
                     "garbage collected immediately after `register_random` creates a "
                     "weakref to it. This will prevent Hypothesis from managing this "
-                    "source of RNG. See the docs for `register_random` for more "
+                    "PRNG. See the docs for `register_random` for more "
                     "details."
                 )
-            else:
+            elif not FREE_THREADED_CPYTHON:  # pragma: no branch
+                # On CPython, check for the free-threaded build because
+                # gc.get_referrers() ignores objects with immortal refcounts
+                # and objects are immortalized in the Python 3.13
+                # free-threading implementation at runtime.
+
                 warnings.warn(
-                    HypothesisWarning(
-                        "It looks like `register_random` was passed an object "
-                        "that could be garbage collected immediately after "
-                        "`register_random` creates a weakref to it. This will "
-                        "prevent Hypothesis from managing this source of RNG. "
-                        "See the docs for `register_random` for more details."
-                    )
+                    "It looks like `register_random` was passed an object that could "
+                    "be garbage collected immediately after `register_random` creates "
+                    "a weakref to it. This will prevent Hypothesis from managing this "
+                    "PRNG. See the docs for `register_random` for more details.",
+                    HypothesisWarning,
+                    stacklevel=2,
                 )
 
     RANDOMS_TO_MANAGE[next(_RKEY)] = r
@@ -146,7 +150,7 @@ def register_random(r: RandomLike) -> None:
 
 def get_seeder_and_restorer(
     seed: Hashable = 0,
-) -> Tuple[Callable[[], None], Callable[[], None]]:
+) -> tuple[Callable[[], None], Callable[[], None]]:
     """Return a pair of functions which respectively seed all and restore
     the state of all registered PRNGs.
 
@@ -156,8 +160,9 @@ def get_seeder_and_restorer(
     to force determinism on simulation or scheduling frameworks which avoid
     using the global random state.  See e.g. #1709.
     """
-    assert isinstance(seed, int) and 0 <= seed < 2**32
-    states: dict = {}
+    assert isinstance(seed, int)
+    assert 0 <= seed < 2**32
+    states: dict[int, object] = {}
 
     if "numpy" in sys.modules:
         global NP_RANDOM
@@ -165,13 +170,13 @@ def get_seeder_and_restorer(
             # Protect this from garbage-collection by adding it to global scope
             NP_RANDOM = RANDOMS_TO_MANAGE[next(_RKEY)] = NumpyRandomWrapper()
 
-    def seed_all():
+    def seed_all() -> None:
         assert not states
         for k, r in RANDOMS_TO_MANAGE.items():
             states[k] = r.getstate()
             r.seed(seed)
 
-    def restore_all():
+    def restore_all() -> None:
         for k, state in states.items():
             r = RANDOMS_TO_MANAGE.get(k)
             if r is not None:  # i.e., hasn't been garbage-collected
@@ -182,7 +187,7 @@ def get_seeder_and_restorer(
 
 
 @contextlib.contextmanager
-def deterministic_PRNG(seed=0):
+def deterministic_PRNG(seed: int = 0) -> Generator[None, None, None]:
     """Context manager that handles random.seed without polluting global state.
 
     See issue #1255 and PR #1295 for details and motivation - in short,

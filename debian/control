@@ -4,32 +4,36 @@ Priority: optional
 Maintainer: Pexip AS <packaging@pexip.com>
 XSBC-Pexip-Original-Maintainer: Debian Python Team <team+python@tracker.debian.org>
 XSBC-Pexip-Original-Uploaders:
- Tristan Seligmann <mithrandi@debian.org>,
- Vincent Bernat <bernat@debian.org>,
+ Timo Röhling <roehling@debian.org>,
 Build-Depends:
  debhelper-compat (= 13),
  dh-sequence-python3,
  dh-sequence-sphinxdoc <!nodoc>,
+ black <!nocheck>,
+ furo,
  python3-all,
  python3-attr,
+ python3-click <!nocheck>,
  python3-coverage,
  python3-dateutil <!nocheck> <!nodoc>,
  python3-django <!nodoc>,
- python3-exceptiongroup,
+ python3-fakeredis <!nocheck>,
  python3-flaky <!nocheck>,
  python3-lark <!nodoc>,
- python3-mock <!nocheck>,
- python3-numpy <!nocheck>,
- python3-numpy <!nodoc>,
+ python3-numpy <!nocheck> <!nodoc>,
+ python3-pandas <!nocheck>,
  python3-pexpect <!nocheck>,
  python3-pytest <!nocheck>,
+ python3-redis <!nocheck>,
  python3-setuptools,
  python3-sortedcontainers,
  python3-sphinx <!nodoc>,
  python3-sphinx-rtd-theme <!nodoc>,
+ python3-typing-extensions <!nocheck>,
  python3-tz <!nocheck>,
+ python3-watchdog <!nocheck>,
 Rules-Requires-Root: no
-Standards-Version: 4.6.2
+Standards-Version: 4.7.2
 Homepage: https://github.com/HypothesisWorks/hypothesis
 Vcs-Git: https://salsa.debian.org/python-team/packages/python-hypothesis.git
 Vcs-Browser: https://salsa.debian.org/python-team/packages/python-hypothesis
@@ -47,7 +51,7 @@ Recommends:
 Suggests:
  python-hypothesis-doc,
 Breaks:
- python3-h2 (<< 4.1.0~)
+ python3-h2 (<< 4.1.0~),
 Description: advanced Quickcheck style testing library for Python 3
  Hypothesis is a library for testing your Python code against a much
  larger range of examples than you would ever want to write by

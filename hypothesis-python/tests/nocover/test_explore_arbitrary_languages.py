@@ -23,17 +23,11 @@ from hypothesis import (
     settings,
     strategies as st,
 )
-from hypothesis.internal import escalation as esc
 from hypothesis.internal.conjecture.data import Status
 from hypothesis.internal.conjecture.engine import ConjectureRunner
 
-
-def setup_module(module):
-    esc.PREVENT_ESCALATION = True
-
-
-def teardown_module(module):
-    esc.PREVENT_ESCALATION = False
+from tests.common.utils import Why, xfail_on_crosshair
+from tests.conjecture.common import interesting_origin
 
 
 @attr.s()
@@ -45,7 +39,7 @@ class Write:
 @attr.s()
 class Branch:
     bits = attr.ib()
-    children = attr.ib(default=attr.Factory(dict))
+    children = attr.ib(factory=dict)
 
 
 @attr.s()
@@ -83,11 +77,13 @@ def run_language_test_for(root, data, seed):
         node = root
         while not isinstance(node, Terminal):
             if isinstance(node, Write):
-                local_data.write(node.value)
+                local_data.draw_bytes(
+                    len(node.value), len(node.value), forced=node.value
+                )
                 node = node.child
             else:
                 assert isinstance(node, Branch)
-                c = local_data.draw_bits(node.bits)
+                c = local_data.draw_integer(0, 2**node.bits - 1)
                 try:
                     node = node.children[c]
                 except KeyError:
@@ -96,7 +92,7 @@ def run_language_test_for(root, data, seed):
                     node = node.children.setdefault(c, data.draw(nodes))
         assert isinstance(node, Terminal)
         if node.status == Status.INTERESTING:
-            local_data.mark_interesting(node.payload)
+            local_data.mark_interesting(interesting_origin(node.payload))
         elif node.status == Status.INVALID:
             local_data.mark_invalid()
 
@@ -105,7 +101,7 @@ def run_language_test_for(root, data, seed):
         settings=settings(
             max_examples=1,
             database=None,
-            suppress_health_check=HealthCheck.all(),
+            suppress_health_check=list(HealthCheck),
             verbosity=Verbosity.quiet,
             # Restore the global default phases, so that we don't inherit the
             # phases setting from the outer test.
@@ -120,8 +116,9 @@ def run_language_test_for(root, data, seed):
     assume(runner.interesting_examples)
 
 
+@xfail_on_crosshair(Why.nested_given)  # technically nested-engine, but same problem
 @settings(
-    suppress_health_check=HealthCheck.all(),
+    suppress_health_check=list(HealthCheck),
     deadline=None,
     phases=set(settings.default.phases) - {Phase.shrink},
 )

@@ -8,25 +8,29 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+import math
+
 import pytest
 
-from hypothesis import settings
-from hypothesis.internal.compat import int_to_bytes
+from hypothesis import assume, example, given, settings
+from hypothesis.internal.conjecture.choice import ChoiceNode
 from hypothesis.internal.conjecture.data import Status
+from hypothesis.internal.conjecture.datatree import compute_max_children
 from hypothesis.internal.conjecture.engine import ConjectureRunner, RunIsComplete
 from hypothesis.internal.entropy import deterministic_PRNG
+from hypothesis.internal.intervalsets import IntervalSet
 
-from tests.conjecture.common import TEST_SETTINGS, buffer_size_limit
+from tests.conjecture.common import TEST_SETTINGS, buffer_size_limit, integer_kw, nodes
 
 
 def test_optimises_to_maximum():
     with deterministic_PRNG():
 
         def test(data):
-            data.target_observations["m"] = data.draw_bits(8)
+            data.target_observations["m"] = data.draw_integer(0, 2**8 - 1)
 
         runner = ConjectureRunner(test, settings=TEST_SETTINGS)
-        runner.cached_test_function([0])
+        runner.cached_test_function((0,))
 
         try:
             runner.optimise_targets()
@@ -40,8 +44,8 @@ def test_optimises_multiple_targets():
     with deterministic_PRNG():
 
         def test(data):
-            n = data.draw_bits(8)
-            m = data.draw_bits(8)
+            n = data.draw_integer(0, 2**8 - 1)
+            m = data.draw_integer(0, 2**8 - 1)
             if n + m > 256:
                 data.mark_invalid()
             data.target_observations["m"] = m
@@ -49,8 +53,8 @@ def test_optimises_multiple_targets():
             data.target_observations["m + n"] = m + n
 
         runner = ConjectureRunner(test, settings=TEST_SETTINGS)
-        runner.cached_test_function([200, 0])
-        runner.cached_test_function([0, 200])
+        runner.cached_test_function((200, 0))
+        runner.cached_test_function((0, 200))
 
         try:
             runner.optimise_targets()
@@ -66,12 +70,12 @@ def test_optimises_when_last_element_is_empty():
     with deterministic_PRNG():
 
         def test(data):
-            data.target_observations["n"] = data.draw_bits(8)
-            data.start_example(1)
-            data.stop_example(1)
+            data.target_observations["n"] = data.draw_integer(0, 2**8 - 1)
+            data.start_span(label=1)
+            data.stop_span()
 
         runner = ConjectureRunner(test, settings=TEST_SETTINGS)
-        runner.cached_test_function([250])
+        runner.cached_test_function((250,))
 
         try:
             runner.optimise_targets()
@@ -86,15 +90,15 @@ def test_can_optimise_last_with_following_empty():
 
         def test(data):
             for _ in range(100):
-                data.draw_bits(2)
-            data.target_observations[""] = data.draw_bits(8)
-            data.start_example(1)
-            data.stop_example()
+                data.draw_integer(0, 3)
+            data.target_observations[""] = data.draw_integer(0, 2**8 - 1)
+            data.start_span(1)
+            data.stop_span()
 
         runner = ConjectureRunner(
             test, settings=settings(TEST_SETTINGS, max_examples=100)
         )
-        runner.cached_test_function(bytes(101))
+        runner.cached_test_function((0,) * 101)
 
         with pytest.raises(RunIsComplete):
             runner.optimise_targets()
@@ -107,7 +111,7 @@ def test_can_find_endpoints_of_a_range(lower, upper, score_up):
     with deterministic_PRNG():
 
         def test(data):
-            n = data.draw_bits(16)
+            n = data.draw_integer(0, 2**16 - 1)
             if n < lower or n > upper:
                 data.mark_invalid()
             if not score_up:
@@ -117,7 +121,7 @@ def test_can_find_endpoints_of_a_range(lower, upper, score_up):
         runner = ConjectureRunner(
             test, settings=settings(TEST_SETTINGS, max_examples=1000)
         )
-        runner.cached_test_function(int_to_bytes((lower + upper) // 2, 2))
+        runner.cached_test_function(((lower + upper) // 2,))
 
         try:
             runner.optimise_targets()
@@ -134,12 +138,15 @@ def test_targeting_can_drive_length_very_high():
 
         def test(data):
             count = 0
-            while data.draw_bits(2) == 3:
+            while data.draw_boolean(0.25):
                 count += 1
             data.target_observations[""] = min(count, 100)
 
         runner = ConjectureRunner(test, settings=TEST_SETTINGS)
-        runner.cached_test_function(bytes(10))
+        # extend here to ensure we get a valid (non-overrun) test case. The
+        # outcome of the test case doesn't really matter as long as we have
+        # something for the runner to optimize.
+        runner.cached_test_function([], extend=50)
 
         try:
             runner.optimise_targets()
@@ -153,14 +160,14 @@ def test_optimiser_when_test_grows_buffer_to_invalid():
     with deterministic_PRNG():
 
         def test(data):
-            m = data.draw_bits(8)
+            m = data.draw_integer(0, 2**8 - 1)
             data.target_observations["m"] = m
             if m > 100:
-                data.draw_bits(16)
+                data.draw_integer(0, 2**16 - 1)
                 data.mark_invalid()
 
         runner = ConjectureRunner(test, settings=TEST_SETTINGS)
-        runner.cached_test_function(bytes(10))
+        runner.cached_test_function((0,) * 10)
 
         try:
             runner.optimise_targets()
@@ -174,18 +181,18 @@ def test_can_patch_up_examples():
     with deterministic_PRNG():
 
         def test(data):
-            data.start_example(42)
-            m = data.draw_bits(6)
+            data.start_span(42)
+            m = data.draw_integer(0, 2**6 - 1)
             data.target_observations["m"] = m
             for _ in range(m):
-                data.draw_bits(1)
-            data.stop_example()
+                data.draw_boolean()
+            data.stop_span()
             for i in range(4):
-                if i != data.draw_bits(8):
+                if i != data.draw_integer(0, 2**8 - 1):
                     data.mark_invalid()
 
         runner = ConjectureRunner(test, settings=TEST_SETTINGS)
-        d = runner.cached_test_function([0, 0, 1, 2, 3, 4])
+        d = runner.cached_test_function((0, 0, 1, 2, 3, 4))
         assert d.status == Status.VALID
 
         try:
@@ -201,14 +208,14 @@ def test_optimiser_when_test_grows_buffer_to_overflow():
         with buffer_size_limit(2):
 
             def test(data):
-                m = data.draw_bits(8)
+                m = data.draw_integer(0, 2**8 - 1)
                 data.target_observations["m"] = m
                 if m > 100:
-                    data.draw_bits(64)
+                    data.draw_integer(0, 2**64 - 1)
                     data.mark_invalid()
 
             runner = ConjectureRunner(test, settings=TEST_SETTINGS)
-            runner.cached_test_function(bytes(10))
+            runner.cached_test_function((0,) * 10)
 
             try:
                 runner.optimise_targets()
@@ -216,3 +223,53 @@ def test_optimiser_when_test_grows_buffer_to_overflow():
                 pass
 
             assert runner.best_observed_targets["m"] == 100
+
+
+@given(nodes())
+@example(
+    ChoiceNode(
+        type="bytes",
+        value=b"\xb1",
+        kwargs={"min_size": 1, "max_size": 1},
+        was_forced=False,
+    )
+)
+@example(
+    ChoiceNode(
+        type="string",
+        value="aaaa",
+        kwargs={
+            "min_size": 0,
+            "max_size": 10,
+            "intervals": IntervalSet.from_string("abcd"),
+        },
+        was_forced=False,
+    )
+)
+@example(
+    ChoiceNode(type="integer", value=1, kwargs=integer_kw(0, 200), was_forced=False)
+)
+def test_optimising_all_nodes(node):
+    assume(compute_max_children(node.type, node.kwargs) > 50)
+    size_function = {
+        "integer": lambda n: n,
+        "float": lambda f: f if math.isfinite(f) else 0,
+        "string": lambda s: len(s),
+        "bytes": lambda b: len(b),
+        "boolean": lambda b: int(b),
+    }
+    with deterministic_PRNG():
+
+        def test(data):
+            v = getattr(data, f"draw_{node.type}")(**node.kwargs)
+            data.target_observations["v"] = size_function[node.type](v)
+
+        runner = ConjectureRunner(
+            test, settings=settings(TEST_SETTINGS, max_examples=50)
+        )
+        runner.cached_test_function([node.value])
+
+        try:
+            runner.optimise_targets()
+        except RunIsComplete:
+            pass

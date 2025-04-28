@@ -11,6 +11,7 @@
 import os
 import shlex
 import subprocess
+from pathlib import Path
 
 
 def current_branch():
@@ -29,16 +30,14 @@ def tags():
     return set(result)
 
 
-ROOT = (
+ROOT = Path(
     subprocess.check_output(
         ["git", "-C", os.path.dirname(__file__), "rev-parse", "--show-toplevel"]
     )
     .decode("ascii")
     .strip()
 )
-
-
-REPO_TESTS = os.path.join(ROOT, "whole-repo-tests")
+REPO_TESTS = ROOT / "whole_repo_tests"
 
 
 def hash_for_name(name):
@@ -87,7 +86,7 @@ def last_committer():
 
 
 def git(*args):
-    subprocess.check_call(("git",) + args)
+    subprocess.check_call(("git", *args))
 
 
 TOOLING_COMMITER_NAME = "CI on behalf of the Hypothesis team"
@@ -145,8 +144,7 @@ def all_files():
 
 
 def changed_files_from_master():
-    """Returns a list of files which have changed between a branch and
-    master."""
+    """Returns a list of files which have changed between a branch and master."""
     files = set()
     command = ["git", "diff", "--name-only", "HEAD", "master"]
     diff_output = subprocess.check_output(command).decode("ascii")

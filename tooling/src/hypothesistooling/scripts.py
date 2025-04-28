@@ -40,21 +40,23 @@ def run_script(script, *args, **kwargs):
     return subprocess.check_call([os.path.join(SCRIPTS, script), *args], **kwargs)
 
 
-SCRIPTS = os.path.join(ROOT, "tooling", "scripts")
-COMMON = os.path.join(SCRIPTS, "common.sh")
+SCRIPTS = ROOT / "tooling" / "scripts"
+COMMON = SCRIPTS / "common.sh"
 
 
 def __calc_script_variables():
-    exports = re.compile(r"export ([A-Z_]+)(=|$)")
+    exports = re.compile(r"^export ([A-Z_]+)(=|$)", flags=re.MULTILINE)
 
-    with open(COMMON) as i:
-        common = i.read()
+    common = COMMON.read_text(encoding="utf-8")
 
     for name, _ in exports.findall(common):
         globals()[name] = os.environ[name]
 
 
-__calc_script_variables()
+try:
+    __calc_script_variables()
+except Exception:
+    pass
 
 
 def tool_path(name):

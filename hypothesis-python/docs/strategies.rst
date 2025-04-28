@@ -24,12 +24,13 @@ Some packages provide strategies directly:
 * :pypi:`hypothesis-geojson` - strategy to generate `GeoJson <https://geojson.org/>`_.
 * :pypi:`hypothesis-geometry` - strategies to generate geometric objects.
 * :pypi:`hs-dbus-signature` - strategy to generate arbitrary
-  `D-Bus signatures <https://dbus.freedesktop.org>`_.
+  `D-Bus signatures <https://www.freedesktop.org/wiki/Software/dbus/>`_.
 * :pypi:`hypothesis-sqlalchemy` - strategies to generate :pypi:`SQLAlchemy` objects.
 * :pypi:`hypothesis-ros` - strategies to generate messages and parameters for the `Robot Operating System <https://www.ros.org/>`_.
 * :pypi:`hypothesis-csv` - strategy to generate CSV files.
 * :pypi:`hypothesis-networkx` - strategy to generate :pypi:`networkx` graphs.
 * :pypi:`hypothesis-bio` - strategies for bioinformatics data, such as DNA, codons, FASTA, and FASTQ formats.
+* :pypi:`hypothesis-rdkit` - strategies to generate RDKit molecules and representations such as SMILES and mol blocks
 * :pypi:`hypothesmith` - strategy to generate syntatically-valid Python code.
 
 Others provide a function to infer a strategy from some other schema:
@@ -40,21 +41,27 @@ Others provide a function to infer a strategy from some other schema:
 * :pypi:`hypothesis-graphql` - infer strategies from `GraphQL schemas <https://graphql.org/>`_.
 * :pypi:`hypothesis-mongoengine` - infer strategies from a :pypi:`mongoengine` model.
 * :pypi:`hypothesis-pb` - infer strategies from `Protocol Buffer
-  <https://developers.google.com/protocol-buffers/>`_ schemas.
+  <https://protobuf.dev/>`_ schemas.
 
 Or some other custom integration, such as a :ref:`"hypothesis" entry point <entry-points>`:
 
 * :pypi:`deal` is a design-by-contract library with built-in Hypothesis support.
 * :pypi:`icontract-hypothesis` infers strategies from :pypi:`icontract` code contracts.
-* :pypi:`Pandera` schemas all have a ``.strategy()`` method, which returns a strategy for
+* :pypi:`pandera` schemas all have a ``.strategy()`` method, which returns a strategy for
   matching :class:`~pandas:pandas.DataFrame`\ s.
-* :pypi:`Pydantic` automatically registers constrained types - so
+* :pypi:`Pydantic <pydantic>` automatically registers constrained types - so
   :func:`~hypothesis.strategies.builds` and :func:`~hypothesis.strategies.from_type`
   "just work" regardless of the underlying implementation.
 
 -----------------
 Other cool things
 -----------------
+
+`Tyche <https://marketplace.visualstudio.com/items?itemName=HarrisonGoldstein.tyche>`__
+(`source <https://github.com/tyche-pbt>`__) is a VSCode extension which provides live
+insights into your property-based tests, including the distribution of generated inputs
+and the resulting code coverage.  You can `read the research paper here
+<https://harrisongoldste.in/papers/uist23.pdf>`__.
 
 :pypi:`schemathesis` is a tool for testing web applications built with `Open API / Swagger specifications <https://swagger.io/>`_.
 It reads the schema and generates test cases which will ensure that the application is compliant with its schema.
@@ -77,7 +84,7 @@ equivalent, from function-level to register-transfer level and even to hardware.
 :pypi:`libarchimedes` makes it easy to use Hypothesis in
 `the Hy language <https://github.com/hylang/hy>`_, a Lisp embedded in Python.
 
-:pypi:`battle_tested` is a fuzzing tool that will show you how your code can
+:pypi:`battle-tested` is a fuzzing tool that will show you how your code can
 fail - by trying all kinds of inputs and reporting whatever happens.
 
 :pypi:`pytest-subtesthack` functions as a workaround for :issue:`377`.
@@ -86,7 +93,7 @@ fail - by trying all kinds of inputs and reporting whatever happens.
 implement functor, applicative, monad, and other laws; allowing a declarative
 approach to be combined with traditional pythonic code.
 
-:pypi:`icontract-hypothesis` includes a :doc:`ghostwriter <ghostwriter>` for test files
+:pypi:`icontract-hypothesis` includes a :ref:`ghostwriter <ghostwriter>` for test files
 and IDE integrations such as `icontract-hypothesis-vim <https://github.com/mristin/icontract-hypothesis-vim>`_,
 `icontract-hypothesis-pycharm <https://github.com/mristin/icontract-hypothesis-pycharm>`_,
 and
@@ -182,11 +189,11 @@ and then tell ``setuptools`` that this is your ``"hypothesis"`` entry point:
 
 And that's all it takes!
 
-.. note::
-    On Python 3.7, where the ``importlib.metadata`` module
-    is not in the standard library, loading entry points requires either the
-    :pypi:`importlib_metadata` (preferred) or :pypi:`setuptools` (fallback)
-    package to be installed.
+.. envvar:: HYPOTHESIS_NO_PLUGINS
+
+   If set, disables automatic loading of all hypothesis plugins. This is probably only
+   useful for our own self-tests, but documented in case it might help narrow down
+   any particularly weird bugs in complex environments.
 
 
 Interaction with :pypi:`pytest-cov`
@@ -204,3 +211,74 @@ loading our pytest plugin from your ``conftest.py`` instead::
 
     echo "pytest_plugins = ['hypothesis.extra.pytestplugin']\n" > tests/conftest.py
     pytest -p "no:hypothesispytest" ...
+
+Another alternative, which we in fact use in our CI self-tests because it works
+well also with parallel tests, is to automatically start coverage early for all
+new processes if an environment variable is set.
+This automatic starting is set up by the PyPi package :pypi:`coverage_enable_subprocess`.
+
+This means all configuration must be done in ``.coveragerc``, and not on the
+command line::
+
+    [run]
+    parallel = True
+    source = ...
+
+Then, set the relevant environment variable and run normally::
+
+    python -m pip install coverage_enable_subprocess
+    export COVERAGE_PROCESS_START=$PATH/.coveragerc
+    pytest [-n auto] ...
+    coverage combine
+    coverage report
+
+
+.. _alternative-backends:
+
+-----------------------------------
+Alternative backends for Hypothesis
+-----------------------------------
+
+.. warning::
+
+   Alternative backends are experimental and not yet part of the public API.
+   We may continue to make breaking changes as we finalize the interface.
+
+Hypothesis supports alternative backends, which tells Hypothesis how to generate primitive
+types. This enables powerful generation techniques which are compatible with all parts of
+Hypothesis, including the database and shrinking.
+
+Hypothesis includes the following backends:
+
+hypothesis
+    The default backend.
+hypothesis-urandom
+    The same as the default backend, but uses ``/dev/urandom`` to back the randomness
+    behind its PRNG. The only reason to use this backend over the default is if you are also
+    using `Antithesis <https://antithesis.com/>`_, in which case this enables Antithesis
+    mutations to drive Hypothesis generation.
+
+    ``/dev/urandom`` is not available on Windows, so we emit a warning and fall back to the
+    hypothesis backend there.
+crosshair
+    Generates examples using SMT solvers like z3, which is particularly effective at satisfying
+    difficult checks in your code, like ``if`` or ``==`` statements.
+
+    Requires ``pip install hypothesis[crosshair]``.
+
+You can change the backend for a test with the ``backend`` setting. For instance, after
+``pip install hypothesis[crosshair]``, you can use :pypi:`crosshair <crosshair-tool>` to
+generate examples with SMT via the :pypi:`hypothesis-crosshair` backend:
+
+.. code-block:: python
+
+    from hypothesis import given, settings, strategies as st
+
+
+    @settings(backend="crosshair")  # pip install hypothesis[crosshair]
+    @given(st.integers())
+    def test_needs_solver(x):
+        assert x != 123456789
+
+Failures found by alternative backends are saved to the database and shrink just like normally
+generated examples, and in general interact with every feature of Hypothesis as you would expect.

@@ -19,10 +19,11 @@ from hypothesis.errors import InvalidArgument, NoSuchExample, Unsatisfiable
 
 
 def test_stops_after_max_examples_if_satisfying():
-    tracker = []
+    count = 0
 
     def track(x):
-        tracker.append(x)
+        nonlocal count
+        count += 1
         return False
 
     max_examples = 100
@@ -30,14 +31,15 @@ def test_stops_after_max_examples_if_satisfying():
     with pytest.raises(NoSuchExample):
         find(s.integers(0, 10000), track, settings=settings(max_examples=max_examples))
 
-    assert len(tracker) == max_examples
+    assert count == max_examples
 
 
 def test_stops_after_ten_times_max_examples_if_not_satisfying():
-    count = [0]
+    count = 0
 
     def track(x):
-        count[0] += 1
+        nonlocal count
+        count += 1
         reject()
 
     max_examples = 100
@@ -48,7 +50,7 @@ def test_stops_after_ten_times_max_examples_if_not_satisfying():
     # Very occasionally we can generate overflows in generation, which also
     # count towards our example budget, which means that we don't hit the
     # maximum.
-    assert count[0] <= 10 * max_examples
+    assert count <= 10 * max_examples
 
 
 some_normal_settings = settings()
@@ -65,33 +67,36 @@ def test_settings_are_default_in_given(x):
 
 
 def test_given_shrinks_pytest_helper_errors():
-    final_value = [None]
+    final_value = None
 
     @settings(derandomize=True, max_examples=100)
     @given(s.integers())
     def inner(x):
-        final_value[0] = x
+        nonlocal final_value
+        final_value = x
         if x > 100:
-            pytest.fail(f"x={x!r} is too big!")
+            pytest.fail(f"{x=} is too big!")
 
     with pytest.raises(Failed):
         inner()
-    assert final_value[0] == 101
+    assert final_value == 101
 
 
 def test_pytest_skip_skips_shrinking():
-    values = []
+    seen_large = False
 
     @settings(derandomize=True, max_examples=100)
     @given(s.integers())
     def inner(x):
-        values.append(x)
+        nonlocal seen_large
         if x > 100:
-            pytest.skip(f"x={x!r} is too big!")
+            if seen_large:
+                raise Exception("Should never replay a skipped test!")
+            seen_large = True
+            pytest.skip(f"{x=} is too big!")
 
     with pytest.raises(Skipped):
         inner()
-    assert len([x for x in values if x > 100]) == 1
 
 
 def test_can_find_with_db_eq_none():
@@ -143,3 +148,27 @@ def empty_db(_):
 def test_non_executed_tests_raise_skipped(test_fn):
     with pytest.raises(unittest.SkipTest):
         test_fn()
+
+
+@pytest.mark.parametrize(
+    "codec, max_codepoint, exclude_categories, categories",
+    [
+        ("ascii", None, None, None),
+        ("ascii", 128, None, None),
+        ("ascii", 100, None, None),
+        ("utf-8", None, None, None),
+        ("utf-8", None, ["Cs"], None),
+        ("utf-8", None, ["N"], None),
+        ("utf-8", None, None, ["N"]),
+    ],
+)
+@given(s.data())
+def test_characters_codec(codec, max_codepoint, exclude_categories, categories, data):
+    strategy = s.characters(
+        codec=codec,
+        max_codepoint=max_codepoint,
+        exclude_categories=exclude_categories,
+        categories=categories,
+    )
+    example = data.draw(strategy)
+    assert example.encode(encoding=codec).decode(encoding=codec) == example

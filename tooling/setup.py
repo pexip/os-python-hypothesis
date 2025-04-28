@@ -18,7 +18,7 @@ def local_file(name):
 
 
 SOURCE = local_file("src")
-README = local_file("README.rst")
+README = local_file("README.md")
 
 setuptools.setup(
     name="hypothesis-tooling",
@@ -32,5 +32,5 @@ setuptools.setup(
     license="MPL v2",
     description="A library for property-based testing",
     python_requires=">=3.7",
-    long_description=open(README).read(),
+    long_description=open(README).read(),  # noqa
 )

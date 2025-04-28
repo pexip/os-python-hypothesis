@@ -8,8 +8,11 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+import importlib
 import math
-from typing import Any, Mapping, Optional, Sequence, Tuple, Union
+import types
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, Union, cast, overload
 
 import numpy as np
 
@@ -34,32 +37,57 @@ from hypothesis.internal.conjecture import utils as cu
 from hypothesis.internal.coverage import check_function
 from hypothesis.internal.reflection import proxies
 from hypothesis.internal.validation import check_type
+from hypothesis.strategies._internal.lazy import unwrap_strategies
 from hypothesis.strategies._internal.numbers import Real
-from hypothesis.strategies._internal.strategies import T, check_strategy
+from hypothesis.strategies._internal.strategies import (
+    Ex,
+    MappedStrategy,
+    T,
+    check_strategy,
+)
 from hypothesis.strategies._internal.utils import defines_strategy
+
+
+def _try_import(mod_name: str, attr_name: str) -> Any:
+    assert "." not in attr_name
+    try:
+        mod = importlib.import_module(mod_name)
+        return getattr(mod, attr_name, None)
+    except ImportError:
+        return None
+
+
+if TYPE_CHECKING:
+    from numpy.typing import DTypeLike, NDArray
+else:
+    NDArray = _try_import("numpy.typing", "NDArray")
+
+ArrayLike = _try_import("numpy.typing", "ArrayLike")
+_NestedSequence = _try_import("numpy._typing._nested_sequence", "_NestedSequence")
+_SupportsArray = _try_import("numpy._typing._array_like", "_SupportsArray")
 
 __all__ = [
     "BroadcastableShapes",
-    "from_dtype",
-    "arrays",
+    "array_dtypes",
     "array_shapes",
-    "scalar_dtypes",
+    "arrays",
+    "basic_indices",
     "boolean_dtypes",
-    "unsigned_integer_dtypes",
-    "integer_dtypes",
-    "floating_dtypes",
+    "broadcastable_shapes",
+    "byte_string_dtypes",
     "complex_number_dtypes",
     "datetime64_dtypes",
-    "timedelta64_dtypes",
-    "byte_string_dtypes",
-    "unicode_string_dtypes",
-    "array_dtypes",
-    "nested_dtypes",
-    "valid_tuple_axes",
-    "broadcastable_shapes",
-    "mutually_broadcastable_shapes",
-    "basic_indices",
+    "floating_dtypes",
+    "from_dtype",
     "integer_array_indices",
+    "integer_dtypes",
+    "mutually_broadcastable_shapes",
+    "nested_dtypes",
+    "scalar_dtypes",
+    "timedelta64_dtypes",
+    "unicode_string_dtypes",
+    "unsigned_integer_dtypes",
+    "valid_tuple_axes",
 ]
 
 TIME_RESOLUTIONS = tuple("Y  M  D  h  m  s  ms  us  ns  ps  fs  as".split())
@@ -99,7 +127,7 @@ def from_dtype(
     kwargs = {k: v for k, v in locals().items() if k != "dtype" and v is not None}
 
     # Compound datatypes, eg 'f4,f4,f4'
-    if dtype.names is not None:
+    if dtype.names is not None and dtype.fields is not None:
         # mapping np.void.type over a strategy is nonsense, so return now.
         subs = [from_dtype(dtype.fields[name][0], **kwargs) for name in dtype.names]
         return st.tuples(*subs)
@@ -127,7 +155,7 @@ def from_dtype(
         result: st.SearchStrategy[Any] = st.booleans()
     elif dtype.kind == "f":
         result = st.floats(
-            width=min(8 * dtype.itemsize, 64),
+            width=cast(Literal[16, 32, 64], min(8 * dtype.itemsize, 64)),
             **compat_kw(
                 "min_value",
                 "max_value",
@@ -140,7 +168,9 @@ def from_dtype(
         )
     elif dtype.kind == "c":
         result = st.complex_numbers(
-            width=min(8 * dtype.itemsize, 128),  # convert from bytes to bits
+            width=cast(
+                Literal[32, 64, 128], min(8 * dtype.itemsize, 128)
+            ),  # convert from bytes to bits
             **compat_kw(
                 "min_magnitude",
                 "max_magnitude",
@@ -178,7 +208,11 @@ def from_dtype(
             # it here because we'd have to guard against equivalents in arrays()
             # regardless and drawing scalars is a valid use-case.
             res = st.sampled_from(TIME_RESOLUTIONS)
-        result = st.builds(dtype.type, st.integers(-(2**63), 2**63 - 1), res)
+        if allow_nan is not False:
+            elems = st.integers(-(2**63), 2**63 - 1) | st.just("NaT")
+        else:  # NEP-7 defines the NaT value as integer -(2**63)
+            elems = st.integers(-(2**63) + 1, 2**63 - 1)
+        result = st.builds(dtype.type, elems, res)
     else:
         raise InvalidArgument(f"No strategy inference for {dtype}")
     return result.map(dtype.type)
@@ -193,6 +227,12 @@ class ArrayStrategy(st.SearchStrategy):
         self.element_strategy = element_strategy
         self.unique = unique
         self._check_elements = dtype.kind not in ("O", "V")
+
+    def __repr__(self):
+        return (
+            f"ArrayStrategy({self.element_strategy!r}, shape={self.shape}, "
+            f"dtype={self.dtype!r}, fill={self.fill!r}, unique={self.unique!r})"
+        )
 
     def set_element(self, val, result, idx, *, fill=False):
         try:
@@ -299,7 +339,7 @@ class ArrayStrategy(st.SearchStrategy):
             seen = set()
 
             while elements.more():
-                i = cu.integer_range(data, 0, self.array_size - 1)
+                i = data.draw_integer(0, self.array_size - 1)
                 if not needs_fill[i]:
                     elements.reject()
                     continue
@@ -362,7 +402,6 @@ class ArrayStrategy(st.SearchStrategy):
         return result
 
 
-@check_function
 def fill_for(elements, unique, fill, name=""):
     if fill is None:
         if unique or not elements.has_reusable_values:
@@ -374,15 +413,43 @@ def fill_for(elements, unique, fill, name=""):
     return fill
 
 
+D = TypeVar("D", bound="DTypeLike")
+G = TypeVar("G", bound="np.generic")
+
+
+@overload
 @defines_strategy(force_reusable_values=True)
 def arrays(
-    dtype: Any,
+    dtype: Union["np.dtype[G]", st.SearchStrategy["np.dtype[G]"]],
     shape: Union[int, st.SearchStrategy[int], Shape, st.SearchStrategy[Shape]],
     *,
-    elements: Optional[Union[st.SearchStrategy, Mapping[str, Any]]] = None,
+    elements: Optional[Union[st.SearchStrategy[Any], Mapping[str, Any]]] = None,
     fill: Optional[st.SearchStrategy[Any]] = None,
     unique: bool = False,
-) -> st.SearchStrategy[np.ndarray]:
+) -> "st.SearchStrategy[NDArray[G]]": ...
+
+
+@overload
+@defines_strategy(force_reusable_values=True)
+def arrays(
+    dtype: Union[D, st.SearchStrategy[D]],
+    shape: Union[int, st.SearchStrategy[int], Shape, st.SearchStrategy[Shape]],
+    *,
+    elements: Optional[Union[st.SearchStrategy[Any], Mapping[str, Any]]] = None,
+    fill: Optional[st.SearchStrategy[Any]] = None,
+    unique: bool = False,
+) -> "st.SearchStrategy[NDArray[Any]]": ...
+
+
+@defines_strategy(force_reusable_values=True)
+def arrays(
+    dtype: Union[D, st.SearchStrategy[D]],
+    shape: Union[int, st.SearchStrategy[int], Shape, st.SearchStrategy[Shape]],
+    *,
+    elements: Optional[Union[st.SearchStrategy[Any], Mapping[str, Any]]] = None,
+    fill: Optional[st.SearchStrategy[Any]] = None,
+    unique: bool = False,
+) -> "st.SearchStrategy[NDArray[Any]]":
     r"""Returns a strategy for generating :class:`numpy:numpy.ndarray`\ s.
 
     * ``dtype`` may be any valid input to :class:`~numpy:numpy.dtype`
@@ -445,6 +512,11 @@ def arrays(
     hundreds or more elements, having a fill value is essential if you want
     your tests to run in reasonable time.
     """
+    # Our dtype argument might be a union, e.g. `np.float64 | np.complex64`; we handle
+    # that by turning it into a strategy up-front.
+    if type(dtype) in (getattr(types, "UnionType", object()), Union):
+        dtype = st.one_of(*(from_dtype(np.dtype(d)) for d in dtype.__args__))  # type: ignore
+
     # We support passing strategies as arguments for convenience, or at least
     # for legacy reasons, but don't want to pay the perf cost of a composite
     # strategy (i.e. repeated argument handling and validation) when it's not
@@ -459,7 +531,8 @@ def arrays(
             lambda s: arrays(dtype, s, elements=elements, fill=fill, unique=unique)
         )
     # From here on, we're only dealing with values and it's relatively simple.
-    dtype = np.dtype(dtype)
+    dtype = np.dtype(dtype)  # type: ignore[arg-type]
+    assert isinstance(dtype, np.dtype)  # help mypy out a bit...
     if elements is None or isinstance(elements, Mapping):
         if dtype.kind in ("m", "M") and "[" not in dtype.str:
             # For datetime and timedelta dtypes, we have a tricky situation -
@@ -473,6 +546,13 @@ def arrays(
             )
         elements = from_dtype(dtype, **(elements or {}))
     check_strategy(elements, "elements")
+    # If there's a redundant cast to the requested dtype, remove it.  This unlocks
+    # optimizations such as fast unique sampled_from, and saves some time directly too.
+    unwrapped = unwrap_strategies(elements)
+    if isinstance(unwrapped, MappedStrategy) and unwrapped.pack == dtype.type:
+        elements = unwrapped.mapped_strategy
+        if getattr(unwrapped, "force_has_reusable_values", False):
+            elements.force_has_reusable_values = True  # type: ignore
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)
@@ -509,8 +589,9 @@ def defines_dtype_strategy(strat: T) -> T:
 
 
 @defines_dtype_strategy
-def boolean_dtypes() -> st.SearchStrategy[np.dtype]:
-    return st.just("?")
+def boolean_dtypes() -> st.SearchStrategy["np.dtype[np.bool_]"]:
+    """Return a strategy for boolean dtypes."""
+    return st.just("?")  # type: ignore[arg-type]
 
 
 def dtype_factory(kind, sizes, valid_sizes, endianness):
@@ -542,10 +623,62 @@ def dtype_factory(kind, sizes, valid_sizes, endianness):
     return strat.map((endianness + kind).format)
 
 
+@overload
 @defines_dtype_strategy
 def unsigned_integer_dtypes(
-    *, endianness: str = "?", sizes: Sequence[int] = (8, 16, 32, 64)
-) -> st.SearchStrategy[np.dtype]:
+    *,
+    endianness: str = "?",
+    sizes: Literal[8],
+) -> st.SearchStrategy["np.dtype[np.uint8]"]: ...
+
+
+@overload
+@defines_dtype_strategy
+def unsigned_integer_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Literal[16],
+) -> st.SearchStrategy["np.dtype[np.uint16]"]: ...
+
+
+@overload
+@defines_dtype_strategy
+def unsigned_integer_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Literal[32],
+) -> st.SearchStrategy["np.dtype[np.uint32]"]: ...
+
+
+@overload
+@defines_dtype_strategy
+def unsigned_integer_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Literal[64],
+) -> st.SearchStrategy["np.dtype[np.uint64]"]: ...
+
+
+@overload
+@defines_dtype_strategy
+def unsigned_integer_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Sequence[Literal[8, 16, 32, 64]] = (8, 16, 32, 64),
+) -> st.SearchStrategy["np.dtype[np.unsignedinteger[Any]]"]: ...
+
+
+@defines_dtype_strategy
+def unsigned_integer_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Union[Literal[8, 16, 32, 64], Sequence[Literal[8, 16, 32, 64]]] = (
+        8,
+        16,
+        32,
+        64,
+    ),
+) -> st.SearchStrategy["np.dtype[np.unsignedinteger[Any]]"]:
     """Return a strategy for unsigned integer dtypes.
 
     endianness may be ``<`` for little-endian, ``>`` for big-endian,
@@ -558,10 +691,62 @@ def unsigned_integer_dtypes(
     return dtype_factory("u", sizes, (8, 16, 32, 64), endianness)
 
 
+@overload
 @defines_dtype_strategy
 def integer_dtypes(
-    *, endianness: str = "?", sizes: Sequence[int] = (8, 16, 32, 64)
-) -> st.SearchStrategy[np.dtype]:
+    *,
+    endianness: str = "?",
+    sizes: Literal[8],
+) -> st.SearchStrategy["np.dtype[np.int8]"]: ...
+
+
+@overload
+@defines_dtype_strategy
+def integer_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Literal[16],
+) -> st.SearchStrategy["np.dtype[np.int16]"]: ...
+
+
+@overload
+@defines_dtype_strategy
+def integer_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Literal[32],
+) -> st.SearchStrategy["np.dtype[np.int32]"]: ...
+
+
+@overload
+@defines_dtype_strategy
+def integer_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Literal[64],
+) -> st.SearchStrategy["np.dtype[np.int64]"]: ...
+
+
+@overload
+@defines_dtype_strategy
+def integer_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Sequence[Literal[8, 16, 32, 64]] = (8, 16, 32, 64),
+) -> st.SearchStrategy["np.dtype[np.signedinteger[Any]]"]: ...
+
+
+@defines_dtype_strategy
+def integer_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Union[Literal[8, 16, 32, 64], Sequence[Literal[8, 16, 32, 64]]] = (
+        8,
+        16,
+        32,
+        64,
+    ),
+) -> st.SearchStrategy["np.dtype[np.signedinteger[Any]]"]:
     """Return a strategy for signed integer dtypes.
 
     endianness and sizes are treated as for
@@ -570,10 +755,59 @@ def integer_dtypes(
     return dtype_factory("i", sizes, (8, 16, 32, 64), endianness)
 
 
+@overload
 @defines_dtype_strategy
 def floating_dtypes(
-    *, endianness: str = "?", sizes: Sequence[int] = (16, 32, 64)
-) -> st.SearchStrategy[np.dtype]:
+    *,
+    endianness: str = "?",
+    sizes: Literal[16],
+) -> st.SearchStrategy["np.dtype[np.float16]"]: ...
+
+
+@overload
+@defines_dtype_strategy
+def floating_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Literal[32],
+) -> st.SearchStrategy["np.dtype[np.float32]"]: ...
+
+
+@overload
+@defines_dtype_strategy
+def floating_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Literal[64],
+) -> st.SearchStrategy["np.dtype[np.float64]"]: ...
+
+
+@overload
+@defines_dtype_strategy
+def floating_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Literal[128],
+) -> st.SearchStrategy["np.dtype[np.float128]"]: ...
+
+
+@overload
+@defines_dtype_strategy
+def floating_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Sequence[Literal[16, 32, 64, 96, 128]] = (16, 32, 64),
+) -> st.SearchStrategy["np.dtype[np.floating[Any]]"]: ...
+
+
+@defines_dtype_strategy
+def floating_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Union[
+        Literal[16, 32, 64, 96, 128], Sequence[Literal[16, 32, 64, 96, 128]]
+    ] = (16, 32, 64),
+) -> st.SearchStrategy["np.dtype[np.floating[Any]]"]:
     """Return a strategy for floating-point dtypes.
 
     sizes is the size in bits of floating-point number.  Some machines support
@@ -586,10 +820,51 @@ def floating_dtypes(
     return dtype_factory("f", sizes, (16, 32, 64, 96, 128), endianness)
 
 
+@overload
 @defines_dtype_strategy
 def complex_number_dtypes(
-    *, endianness: str = "?", sizes: Sequence[int] = (64, 128)
-) -> st.SearchStrategy[np.dtype]:
+    *,
+    endianness: str = "?",
+    sizes: Literal[64],
+) -> st.SearchStrategy["np.dtype[np.complex64]"]: ...
+
+
+@overload
+@defines_dtype_strategy
+def complex_number_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Literal[128],
+) -> st.SearchStrategy["np.dtype[np.complex128]"]: ...
+
+
+@overload
+@defines_dtype_strategy
+def complex_number_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Literal[256],
+) -> st.SearchStrategy["np.dtype[np.complex256]"]: ...
+
+
+@overload
+@defines_dtype_strategy
+def complex_number_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Sequence[Literal[64, 128, 192, 256]] = (64, 128),
+) -> st.SearchStrategy["np.dtype[np.complexfloating[Any, Any]]"]: ...
+
+
+@defines_dtype_strategy
+def complex_number_dtypes(
+    *,
+    endianness: str = "?",
+    sizes: Union[Literal[64, 128, 192, 256], Sequence[Literal[64, 128, 192, 256]]] = (
+        64,
+        128,
+    ),
+) -> st.SearchStrategy["np.dtype[np.complexfloating[Any, Any]]"]:
     """Return a strategy for complex-number dtypes.
 
     sizes is the total size in bits of a complex number, which consists
@@ -628,7 +903,7 @@ def validate_time_slice(max_period, min_period):
 @defines_dtype_strategy
 def datetime64_dtypes(
     *, max_period: str = "Y", min_period: str = "ns", endianness: str = "?"
-) -> st.SearchStrategy[np.dtype]:
+) -> st.SearchStrategy["np.dtype[np.datetime64]"]:
     """Return a strategy for datetime64 dtypes, with various precisions from
     year to attosecond."""
     return dtype_factory(
@@ -642,7 +917,7 @@ def datetime64_dtypes(
 @defines_dtype_strategy
 def timedelta64_dtypes(
     *, max_period: str = "Y", min_period: str = "ns", endianness: str = "?"
-) -> st.SearchStrategy[np.dtype]:
+) -> st.SearchStrategy["np.dtype[np.timedelta64]"]:
     """Return a strategy for timedelta64 dtypes, with various precisions from
     year to attosecond."""
     return dtype_factory(
@@ -656,7 +931,7 @@ def timedelta64_dtypes(
 @defines_dtype_strategy
 def byte_string_dtypes(
     *, endianness: str = "?", min_len: int = 1, max_len: int = 16
-) -> st.SearchStrategy[np.dtype]:
+) -> st.SearchStrategy["np.dtype[np.bytes_]"]:
     """Return a strategy for generating bytestring dtypes, of various lengths
     and byteorder.
 
@@ -671,7 +946,7 @@ def byte_string_dtypes(
 @defines_dtype_strategy
 def unicode_string_dtypes(
     *, endianness: str = "?", min_len: int = 1, max_len: int = 16
-) -> st.SearchStrategy[np.dtype]:
+) -> st.SearchStrategy["np.dtype[np.str_]"]:
     """Return a strategy for generating unicode string dtypes, of various
     lengths and byteorder.
 
@@ -713,12 +988,12 @@ def array_dtypes(
         field_names,
         st.tuples(field_names, field_names).filter(lambda ns: ns[0] != ns[1]),
     )
-    elements = st.tuples(name_titles, subtype_strategy)
+    elements: st.SearchStrategy[tuple] = st.tuples(name_titles, subtype_strategy)
     if allow_subarrays:
         elements |= st.tuples(
             name_titles, subtype_strategy, array_shapes(max_dims=2, max_side=2)
         )
-    return st.lists(
+    return st.lists(  # type: ignore[return-value]
         elements=elements,
         min_size=min_size,
         max_size=max_size,
@@ -823,7 +1098,7 @@ def basic_indices(
     allow_newaxis: bool = False,
     allow_ellipsis: bool = True,
 ) -> st.SearchStrategy[BasicIndex]:
-    """Return a strategy for :doc:`basic indexes <numpy:reference/arrays.indexing>` of
+    """Return a strategy for :doc:`basic indexes <numpy:reference/routines.indexing>` of
     arrays with the specified shape, which may include dimensions of size zero.
 
     It generates tuples containing some mix of integers, :obj:`python:slice`
@@ -851,7 +1126,7 @@ def basic_indices(
     check_type(tuple, shape, "shape")
     check_argument(
         all(isinstance(x, int) and x >= 0 for x in shape),
-        f"shape={shape!r}, but all dimensions must be non-negative integers.",
+        f"{shape=}, but all dimensions must be non-negative integers.",
     )
     check_type(bool, allow_ellipsis, "allow_ellipsis")
     check_type(bool, allow_newaxis, "allow_newaxis")
@@ -895,13 +1170,37 @@ def basic_indices(
     )
 
 
+I = TypeVar("I", bound=np.integer)
+
+
+@overload
 @defines_strategy()
 def integer_array_indices(
     shape: Shape,
     *,
     result_shape: st.SearchStrategy[Shape] = array_shapes(),
-    dtype: np.dtype = "int",
-) -> st.SearchStrategy[Tuple[np.ndarray, ...]]:
+) -> "st.SearchStrategy[tuple[NDArray[np.signedinteger[Any]], ...]]": ...
+
+
+@overload
+@defines_strategy()
+def integer_array_indices(
+    shape: Shape,
+    *,
+    result_shape: st.SearchStrategy[Shape] = array_shapes(),
+    dtype: "np.dtype[I]",
+) -> "st.SearchStrategy[tuple[NDArray[I], ...]]": ...
+
+
+@defines_strategy()
+def integer_array_indices(
+    shape: Shape,
+    *,
+    result_shape: st.SearchStrategy[Shape] = array_shapes(),
+    dtype: "np.dtype[I] | np.dtype[np.signedinteger[Any] | np.bool[bool]]" = np.dtype(
+        int
+    ),
+) -> "st.SearchStrategy[tuple[NDArray[I], ...]]":
     """Return a search strategy for tuples of integer-arrays that, when used
     to index into an array of shape ``shape``, given an array whose shape
     was drawn from ``result_shape``.
@@ -944,11 +1243,11 @@ def integer_array_indices(
     check_type(tuple, shape, "shape")
     check_argument(
         shape and all(isinstance(x, int) and x > 0 for x in shape),
-        f"shape={shape!r} must be a non-empty tuple of integers > 0",
+        f"{shape=} must be a non-empty tuple of integers > 0",
     )
     check_strategy(result_shape, "result_shape")
     check_argument(
-        np.issubdtype(dtype, np.integer), f"dtype={dtype!r} must be an integer dtype"
+        np.issubdtype(dtype, np.integer), f"{dtype=} must be an integer dtype"
     )
     signed = np.issubdtype(dtype, np.signedinteger)
 
@@ -962,3 +1261,137 @@ def integer_array_indices(
     return result_shape.flatmap(
         lambda index_shape: st.tuples(*(array_for(index_shape, size) for size in shape))
     )
+
+
+def _unpack_generic(thing):
+    # get_origin and get_args fail on python<3.9 because (some of) the
+    # relevant types do not inherit from _GenericAlias.  So just pick the
+    # value out directly.
+    real_thing = getattr(thing, "__origin__", None)
+    if real_thing is not None:
+        return (real_thing, getattr(thing, "__args__", ()))
+    else:
+        return (thing, ())
+
+
+def _unpack_dtype(dtype):
+    dtype_args = getattr(dtype, "__args__", ())
+    if dtype_args and type(dtype) not in (getattr(types, "UnionType", object()), Union):
+        assert len(dtype_args) == 1
+        if isinstance(dtype_args[0], TypeVar):
+            # numpy.dtype[+ScalarType]
+            assert dtype_args[0].__bound__ == np.generic
+            dtype = Any
+        else:
+            # plain dtype
+            dtype = dtype_args[0]
+    return dtype
+
+
+def _dtype_from_args(args):
+    if len(args) <= 1:
+        # Zero args: ndarray, _SupportsArray
+        # One arg: ndarray[type], _SupportsArray[type]
+        dtype = _unpack_dtype(args[0]) if args else Any
+    else:
+        # Two args: ndarray[shape, type], NDArray[*]
+        assert len(args) == 2
+        dtype = _unpack_dtype(args[1])
+
+    if dtype is Any:
+        return scalar_dtypes()
+    elif type(dtype) in (getattr(types, "UnionType", object()), Union):
+        return dtype
+    return np.dtype(dtype)
+
+
+def _from_type(thing: type[Ex]) -> Optional[st.SearchStrategy[Ex]]:
+    """Called by st.from_type to try to infer a strategy for thing using numpy.
+
+    If we can infer a numpy-specific strategy for thing, we return that; otherwise,
+    we return None.
+    """
+
+    base_strats = st.one_of(
+        [
+            st.booleans(),
+            st.integers(),
+            st.floats(),
+            st.complex_numbers(),
+            st.text(),
+            st.binary(),
+        ]
+    )
+    # don't mix strings and non-ascii bytestrings (ex: ['', b'\x80']). See
+    # https://github.com/numpy/numpy/issues/23899.
+    base_strats_ascii = st.one_of(
+        [
+            st.booleans(),
+            st.integers(),
+            st.floats(),
+            st.complex_numbers(),
+            st.text(),
+            st.binary().filter(bytes.isascii),
+        ]
+    )
+
+    if thing == np.dtype:
+        # Note: Parameterized dtypes and DTypeLike are not supported.
+        return st.one_of(
+            scalar_dtypes(),
+            byte_string_dtypes(),
+            unicode_string_dtypes(),
+            array_dtypes(),
+            nested_dtypes(),
+        )
+
+    if thing == ArrayLike:
+        # We override the default type resolution to ensure the "coercible to
+        # array" contract is honoured. See
+        # https://github.com/HypothesisWorks/hypothesis/pull/3670#issuecomment-1578140422.
+        # The actual type is (as of np 1.24), with
+        # scalars:=[bool, int, float, complex, str, bytes]:
+        # Union[
+        #     _SupportsArray,
+        #     _NestedSequence[_SupportsArray],
+        #     *scalars,
+        #     _NestedSequence[Union[*scalars]]
+        # ]
+        return st.one_of(
+            # *scalars
+            base_strats,
+            # The two recursive strategies below cover the following cases:
+            # - _SupportsArray (using plain ndarrays)
+            # - _NestedSequence[Union[*scalars]] (but excluding non-ascii binary)
+            # - _NestedSequence[_SupportsArray] (but with a single leaf element
+            # .  to avoid the issue of unequally sized leaves)
+            st.recursive(st.lists(base_strats_ascii), extend=st.tuples),
+            st.recursive(st.from_type(np.ndarray), extend=st.tuples),
+        )
+
+    if isinstance(thing, type) and issubclass(thing, np.generic):
+        dtype = np.dtype(thing)
+        return from_dtype(dtype) if dtype.kind not in "OV" else None
+
+    real_thing, args = _unpack_generic(thing)
+
+    if real_thing == _NestedSequence:
+        # We have to override the default resolution to ensure sequences are of
+        # equal length. Actually they are still not, if the arg specialization
+        # returns arbitrary-shaped sequences or arrays - hence the even more special
+        # resolution of ArrayLike, above.
+        assert len(args) <= 1
+        base_strat = st.from_type(args[0]) if args else base_strats
+        return st.one_of(
+            st.lists(base_strat),
+            st.recursive(st.tuples(), st.tuples),
+            st.recursive(st.tuples(base_strat), st.tuples),
+            st.recursive(st.tuples(base_strat, base_strat), st.tuples),
+        )
+
+    if real_thing in [np.ndarray, _SupportsArray]:
+        dtype = _dtype_from_args(args)
+        return arrays(dtype, array_shapes(max_dims=2))  # type: ignore[return-value]
+
+    # We didn't find a type to resolve, continue
+    return None

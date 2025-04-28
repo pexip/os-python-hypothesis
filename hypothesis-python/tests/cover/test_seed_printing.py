@@ -16,7 +16,7 @@ from hypothesis import Verbosity, assume, core, given, settings, strategies as s
 from hypothesis.database import InMemoryExampleDatabase
 from hypothesis.errors import FailedHealthCheck
 
-from tests.common.utils import all_values, capture_out
+from tests.common.utils import Why, all_values, capture_out, xfail_on_crosshair
 
 
 @pytest.mark.parametrize("in_pytest", [False, True])
@@ -39,7 +39,7 @@ def test_prints_seed_only_on_healthcheck(
     else:
         expected_exc = AssertionError
 
-    @settings(database=None, verbosity=verbosity)
+    @settings(database=None, verbosity=verbosity, suppress_health_check=())
     @given(strategy)
     def test(i):
         assert fail_healthcheck
@@ -66,7 +66,7 @@ def test_uses_global_force(monkeypatch):
 
     @given(st.integers())
     def test(i):
-        raise ValueError()
+        raise ValueError
 
     output = []
 
@@ -80,16 +80,17 @@ def test_uses_global_force(monkeypatch):
     assert "@seed" not in output[0]
 
 
+@xfail_on_crosshair(Why.symbolic_outside_context)
 def test_does_print_on_reuse_from_database():
     passes_healthcheck = False
 
     database = InMemoryExampleDatabase()
 
-    @settings(database=database)
+    @settings(database=database, suppress_health_check=[])
     @given(st.integers())
     def test(i):
         assume(passes_healthcheck)
-        raise ValueError()
+        raise ValueError
 
     with capture_out() as o:
         with pytest.raises(FailedHealthCheck):
