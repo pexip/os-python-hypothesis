@@ -1,0 +1,13 @@
+Description: Ignore warnings in the testsuite alone
+Author: Chris Lamb <lamby@debian.org>
+Bug-Debian: https://bugs.debian.org/1106438
+Forwarded: no
+Last-Update: 2025-05-30
+
+--- python-hypothesis-6.130.5.orig/pytest.ini
++++ python-hypothesis-6.130.5/pytest.ini
+@@ -24,3 +24,4 @@ filterwarnings =
+     default:`np\.object` is a deprecated alias for the builtin `object`:DeprecationWarning
+     # pytest-cov can't see into subprocesses; we'll see <100% covered if this is an issue
+     ignore:Module hypothesis.* was previously imported, but not measured
++    ignore:.*deprecated usage of input argument/s 'retry_on_timeout':DeprecationWarning

@@ -2,3 +2,4 @@
 0002-Disable-hoverxref-not-in-Debian.patch
 0003-Avoid-hard-dependency-on-libcst.patch
 0004-Do-not-enforce-minimum-Sphinx-version.patch
+ignore-warnings-in-the-testsuite-alone.patch
