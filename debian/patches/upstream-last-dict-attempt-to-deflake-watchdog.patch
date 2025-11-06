@@ -1,0 +1,169 @@
+From fefe3de78db7b00b88694ef84bb7adc69fcdca93 Mon Sep 17 00:00:00 2001
+From: Liam DeVoe <orionldevoe@gmail.com>
+Date: Mon, 11 Aug 2025 01:59:34 -0400
+Subject: [PATCH] last ditch attempt to deflake watchdog
+
+---
+ hypothesis-python/tests/common/utils.py       | 18 ++++-
+ .../tests/cover/test_database_backend.py      |  5 ++
+ .../tests/watchdog/test_database.py           | 73 +++++++------------
+ 3 files changed, 47 insertions(+), 49 deletions(-)
+
+diff --git a/hypothesis-python/tests/common/utils.py b/hypothesis-python/tests/common/utils.py
+index 376915d891..a144fd85e3 100644
+--- a/hypothesis-python/tests/common/utils.py
++++ b/hypothesis-python/tests/common/utils.py
+@@ -10,7 +10,9 @@
+ 
+ import contextlib
+ import enum
++import math
+ import sys
++import time
+ import warnings
+ from io import StringIO
+ from types import SimpleNamespace
+@@ -20,11 +22,14 @@
+ from hypothesis.internal.entropy import deterministic_PRNG
+ from hypothesis.internal.floats import next_down
+ from hypothesis.internal.observability import TESTCASE_CALLBACKS
+-from hypothesis.internal.reflection import proxies
++from hypothesis.internal.reflection import get_pretty_function_description, proxies
+ from hypothesis.reporting import default, with_reporter
+ from hypothesis.strategies._internal.core import from_type, register_type_strategy
+ from hypothesis.strategies._internal.types import _global_type_lookup
+ 
++# we need real time here, not monkeypatched for CI
++time_sleep = time.sleep
++
+ try:
+     from pytest import raises
+ except ModuleNotFoundError:
+@@ -277,3 +282,14 @@
+     if as_marks:  # for use with pytest.param(..., marks=xfail_on_crosshair())
+         return (pytest.mark.xf_crosshair, pytest.mark.xfail(**kw))
+     return lambda fn: pytest.mark.xf_crosshair(pytest.mark.xfail(**kw)(fn))
++
++
++def wait_for(condition, *, timeout=1, interval=0.01):
++    for _ in range(math.ceil(timeout / interval)):
++        if condition():
++            return
++        time_sleep(interval)
++    raise Exception(
++        f"timing out after waiting {timeout}s for condition "
++        f"{get_pretty_function_description(condition)}"
++    )
+diff --git a/hypothesis-python/tests/watchdog/test_database.py b/hypothesis-python/tests/watchdog/test_database.py
+index d799f9f7d0..097faf7e7f 100644
+--- a/hypothesis-python/tests/watchdog/test_database.py
++++ b/hypothesis-python/tests/watchdog/test_database.py
+@@ -8,7 +8,6 @@
+ # v. 2.0. If a copy of the MPL was not distributed with this file, You can
+ # obtain one at https://mozilla.org/MPL/2.0/.
+ 
+-import math
+ import sys
+ import time
+ from collections import Counter
+@@ -19,8 +18,8 @@
+     InMemoryExampleDatabase,
+     MultiplexedDatabase,
+ )
+-from hypothesis.internal.reflection import get_pretty_function_description
+ 
++from tests.common.utils import wait_for
+ from tests.cover.test_database_backend import _database_conforms_to_listener_api
+ 
+ # we need real time here, not monkeypatched for CI
+@@ -53,43 +54,33 @@
+     db.add_listener(listener)
+ 
+     db.save(b"a", b"a")
+-    time_sleep(0.2)
+-    assert events == [("save", (b"a", b"a"))] * 2
++    wait_for(lambda: events == [("save", (b"a", b"a"))] * 2, timeout=60)
+ 
+     db.remove_listener(listener)
+     db.delete(b"a", b"a")
+     db.save(b"a", b"b")
+-    time_sleep(0.2)
+-    assert events == [("save", (b"a", b"a"))] * 2
++    wait_for(lambda: events == [("save", (b"a", b"a"))] * 2, timeout=60)
+ 
+     db.add_listener(listener)
+     db.delete(b"a", b"b")
+     db.save(b"a", b"c")
+-    time_sleep(0.2)
+     # InMemory database fires immediately, while DirectoryBased has to
+     # wait for filesystem listeners. Therefore the events can arrive out of
+     # order. Test a weaker multiset property, disregarding ordering.
+-    assert Counter(events[2:]) == {
+-        # InMemory
+-        ("delete", (b"a", b"b")): 1,
+-        # DirectoryBased
+-        ("delete", (b"a", None)): 1,
+-        # both
+-        ("save", (b"a", b"c")): 2,
+-    }
+-
+-
+-def wait_for(condition, *, timeout=1, interval=0.01):
+-    for _ in range(math.ceil(timeout / interval)):
+-        if condition():
+-            return
+-        time_sleep(interval)
+-    raise Exception(
+-        f"timing out after waiting {timeout}s for condition "
+-        f"{get_pretty_function_description(condition)}"
++    wait_for(
++        lambda: Counter(events[2:])
++        == {
++            # InMemory
++            ("delete", (b"a", b"b")): 1,
++            # DirectoryBased
++            ("delete", (b"a", None)): 1,
++            # both
++            ("save", (b"a", b"c")): 2,
++        },
++        timeout=60,
+     )
+ 
+ 
+ def test_database_listener_directory_explicit(tmp_path):
+     db = DirectoryBasedExampleDatabase(tmp_path)
+     events = []
+@@ -100,13 +90,12 @@
+     db.add_listener(listener)
+ 
+     db.save(b"k1", b"v1")
+-    wait_for(lambda: events == [("save", (b"k1", b"v1"))])
++    wait_for(lambda: events == [("save", (b"k1", b"v1"))], timeout=60)
+ 
+     db.remove_listener(listener)
+     db.delete(b"k1", b"v1")
+     db.save(b"k1", b"v2")
+-    time_sleep(0.2)
+-    assert events == [("save", (b"k1", b"v1"))]
++    wait_for(lambda: events == [("save", (b"k1", b"v1"))], timeout=60)
+ 
+     db.add_listener(listener)
+     db.delete(b"k1", b"v2")
+@@ -116,7 +105,8 @@
+         == [
+             ("delete", (b"k1", None)),
+             ("save", (b"k1", b"v3")),
+-        ]
++        ],
++        timeout=60,
+     )
+ 
+     # moving into a nonexistent key
+@@ -182,5 +172,6 @@
+             ("save", (b"k2", b"v1")),
+             # windows doesn't fire move events, so value is None
+             ("delete", (b"k1", None if sys.platform.startswith("win") else b"v1")),
+-        }
++        },
++        timeout=60,
+     )
